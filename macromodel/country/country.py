@@ -207,6 +207,7 @@ class Country:
         self.add_emissions = add_emissions
         self.emission_factors_lcu = emission_factors_lcu
         self.emitting_indices = emitting_indices
+        self.use_emission_multiplier = self.configuration.use_emission_multiplier
 
     @classmethod
     def from_pickled_country(
@@ -269,6 +270,8 @@ class Country:
         initial_consumption_by_industry = synthetic_country.industry_data["industry_vectors"][
             "Household Consumption in LCU"
         ]
+        emission_fractions = synthetic_country.emission_fractions
+
         households = Households.from_pickled_agent(
             synthetic_population=synthetic_population,
             synthetic_country=synthetic_country,
@@ -280,6 +283,7 @@ class Country:
             value_added_tax=synthetic_country.tax_data.value_added_tax,
             scale=scale,
             add_emissions=add_emissions,
+            emission_fractions=emission_fractions,
         )
 
         average_initial_price = synthetic_country.industry_data["industry_vectors"]["Average Initial Price"].values
@@ -292,6 +296,7 @@ class Country:
             average_initial_price=average_initial_price,
             industries=industries,
             add_emissions=add_emissions,
+            emission_fractions=emission_fractions,
         )
 
         taxes_less_subsidies = synthetic_country.industry_data["industry_vectors"]["Taxes Less Subsidies Rates"].values
@@ -1104,7 +1109,11 @@ class Country:
             readjusted_factors = (
                 self.emission_factors_lcu / self.economy.ts.current("good_prices")[self.emitting_indices]
             )
-            self.firms.update_emissions(readjusted_factors=readjusted_factors, emitting_indices=self.emitting_indices)
+            self.firms.update_emissions(
+                readjusted_factors=readjusted_factors,
+                emitting_indices=self.emitting_indices,
+                use_emission_multiplier=self.use_emission_multiplier,
+            )
 
         self.firms.ts.used_intermediate_inputs.append(self.firms.compute_used_intermediate_inputs())
         self.firms.ts.used_intermediate_inputs_costs.append(
@@ -1249,6 +1258,7 @@ class Country:
             readjusted_factors=readjusted_factors,
             emitting_indices=self.emitting_indices,
             add_emissions=self.add_emissions,
+            use_emission_multiplier=self.use_emission_multiplier,
         )
         self.households.update_wealth(
             housing_data=self.housing_market.states["properties"],
