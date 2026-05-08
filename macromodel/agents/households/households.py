@@ -1120,7 +1120,11 @@ class Households(Agent):
             # Apply per-industry consumption fraction multipliers when enabled.
             # emission_fractions.consumption has shape (1, n_industries); index row 0
             # then select emitting columns to get (n_emitting,) broadcast multipliers.
-            if use_emission_multiplier and self.emission_fractions is not None and self.emission_fractions.consumption is not None:
+            if (
+                use_emission_multiplier
+                and self.emission_fractions is not None
+                and self.emission_fractions.consumption is not None
+            ):
                 cons_fracs = self.emission_fractions.consumption[0, emitting_indices]
                 cons_slice = consumption_by_good[:, emitting_indices] * cons_fracs
             else:
@@ -1135,7 +1139,9 @@ class Households(Agent):
                 idx = np.where(emitting_indices == i)[0]
                 multiplier = (
                     self.emission_fractions.consumption[0, i]
-                    if use_emission_multiplier and self.emission_fractions is not None and self.emission_fractions.consumption is not None
+                    if use_emission_multiplier
+                    and self.emission_fractions is not None
+                    and self.emission_fractions.consumption is not None
                     else 1.0
                 )
                 consumption_emissions_by_good[i] = (consumption_sum[i] * multiplier * readjusted_factors[idx]).item()
@@ -1166,7 +1172,11 @@ class Households(Agent):
             inv = self.ts.current("nominal_amount_spent_in_lcu") - consumption_by_good
 
             # Apply per-industry investment fraction multipliers when enabled.
-            if use_emission_multiplier and self.emission_fractions is not None and self.emission_fractions.investment is not None:
+            if (
+                use_emission_multiplier
+                and self.emission_fractions is not None
+                and self.emission_fractions.investment is not None
+            ):
                 inv_fracs = self.emission_fractions.investment[0, emitting_indices]
                 inv_slice = inv[:, emitting_indices] * inv_fracs
             else:
@@ -1181,7 +1191,9 @@ class Households(Agent):
                 idx = np.where(emitting_indices == i)[0]
                 multiplier = (
                     self.emission_fractions.investment[0, i]
-                    if use_emission_multiplier and self.emission_fractions is not None and self.emission_fractions.investment is not None
+                    if use_emission_multiplier
+                    and self.emission_fractions is not None
+                    and self.emission_fractions.investment is not None
                     else 1.0
                 )
                 investment_emissions_by_good[i] = (inv_sum[i] * multiplier * readjusted_factors[idx]).item()

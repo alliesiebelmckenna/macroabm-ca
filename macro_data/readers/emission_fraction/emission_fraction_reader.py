@@ -24,9 +24,6 @@ import pandas as pd
 class EmissionFractions:
     """Container for emission fraction arrays extracted from reader DataFrames.
 
-    Holds per-industry multipliers for each gas/use type. Use values_dictionary
-    for dict-based access: fractions.values_dictionary.get("co2").
-
     Attributes:
         co2: CO2 emission fractions by industry (shape: n_emitting x n_industries)
         ch4: CH4 emission fractions by industry (shape: 1 x n_industries)
@@ -38,16 +35,6 @@ class EmissionFractions:
     ch4: Optional[np.ndarray] = None
     consumption: Optional[np.ndarray] = None
     investment: Optional[np.ndarray] = None
-
-    @property
-    def values_dictionary(self) -> dict[str, Optional[np.ndarray]]:
-        """Dict mapping gas/use name to the corresponding fraction array."""
-        return {
-            "co2": self.co2,
-            "ch4": self.ch4,
-            "consumption": self.consumption,
-            "investment": self.investment,
-        }
 
     @classmethod
     def from_reader(cls, reader: EmissionsFractionReader) -> EmissionFractions:

@@ -141,6 +141,8 @@ class Country:
         add_emissions: bool = False,
         emission_factors_lcu: Optional[np.ndarray] = None,
         emitting_indices: Optional[np.ndarray] = None,
+        emission_factors_lcu_ch4: Optional[np.ndarray] = None,
+        emitting_indices_ch4: Optional[np.ndarray] = None,
     ):
         """Initialize a new country economy.
 
@@ -207,6 +209,8 @@ class Country:
         self.add_emissions = add_emissions
         self.emission_factors_lcu = emission_factors_lcu
         self.emitting_indices = emitting_indices
+        self.emission_factors_lcu_ch4 = emission_factors_lcu_ch4
+        self.emitting_indices_ch4 = emitting_indices_ch4
         self.use_emission_multiplier = self.configuration.use_emission_multiplier
 
     @classmethod
@@ -254,6 +258,13 @@ class Country:
         else:
             emitting_indices = None
             emission_factors_lcu = None
+
+        if synthetic_country.emission_factors_ch4 is not None:
+            emission_factors_lcu_ch4 = synthetic_country.emission_factors_ch4.emission_factors
+            emitting_indices_ch4 = synthetic_country.emission_factors_ch4.emitting_indices
+        else:
+            emission_factors_lcu_ch4 = None
+            emitting_indices_ch4 = None
 
         n_industries = len(industries)
 
@@ -412,6 +423,8 @@ class Country:
             add_emissions=add_emissions,
             emission_factors_lcu=emission_factors_lcu,
             emitting_indices=emitting_indices,
+            emission_factors_lcu_ch4=emission_factors_lcu_ch4,
+            emitting_indices_ch4=emitting_indices_ch4,
         )
 
     def reset(self, configuration: CountryConfiguration) -> None:
@@ -1114,10 +1127,17 @@ class Country:
             readjusted_factors = (
                 self.emission_factors_lcu / self.economy.ts.current("good_prices")[self.emitting_indices]
             )
+            readjusted_factors_ch4 = (
+                self.emission_factors_lcu_ch4 / self.economy.ts.current("good_prices")[self.emitting_indices_ch4]
+                if self.emission_factors_lcu_ch4 is not None
+                else None
+            )
             self.firms.update_emissions(
                 readjusted_factors=readjusted_factors,
                 emitting_indices=self.emitting_indices,
                 use_emission_multiplier=self.use_emission_multiplier,
+                readjusted_factors_ch4=readjusted_factors_ch4,
+                emitting_indices_ch4=self.emitting_indices_ch4,
             )
 
         self.firms.ts.used_intermediate_inputs.append(self.firms.compute_used_intermediate_inputs())
@@ -1254,8 +1274,14 @@ class Country:
             readjusted_factors = (
                 self.emission_factors_lcu / self.economy.ts.current("good_prices")[self.emitting_indices]
             )
+            readjusted_factors_ch4 = (
+                self.emission_factors_lcu_ch4 / self.economy.ts.current("good_prices")[self.emitting_indices_ch4]
+                if self.emission_factors_lcu_ch4 is not None
+                else None
+            )
         else:
             readjusted_factors = None
+            readjusted_factors_ch4 = None
 
         self.households.update_consumption_and_investment(
             tau_vat=self.central_government.states["Value-added Tax"],
@@ -1264,6 +1290,8 @@ class Country:
             emitting_indices=self.emitting_indices,
             add_emissions=self.add_emissions,
             use_emission_multiplier=self.use_emission_multiplier,
+            readjusted_factors_ch4=readjusted_factors_ch4,
+            emitting_indices_ch4=self.emitting_indices_ch4,
         )
         self.households.update_wealth(
             housing_data=self.housing_market.states["properties"],

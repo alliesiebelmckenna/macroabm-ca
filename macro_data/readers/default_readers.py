@@ -40,7 +40,7 @@ from macro_data.readers.economic_data.ons_reader import ONSReader
 from macro_data.readers.economic_data.policy_rates import PolicyRatesReader
 from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
-from macro_data.readers.emissions.emissions_reader import EmissionsReader
+from macro_data.readers.emissions.emissions_reader import CH4EmissionsReaderCAN, EmissionsReader
 from macro_data.readers.exo_prices.exo_prices_reader import FirmExoPricesReader
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
@@ -112,6 +112,7 @@ class DataPaths:
     emissions_path: Path
     emissions_fraction_path: Optional[Path] = None
     firm_prices_path: Optional[Path] = None
+    ch4_emissions_path: Optional[Path] = None
 
     @classmethod
     def default_paths(cls, raw_data_path: Path, icio_years: Iterable[int]):
@@ -146,6 +147,9 @@ class DataPaths:
             emissions_path=raw_data_path / "emissions",
             emissions_fraction_path=raw_data_path / "emission_factors",
             firm_prices_path=raw_data_path / "cims_prices" / "firm_prices.csv",
+            ch4_emissions_path=raw_data_path
+            / "emission_factors"
+            / "EN-GHG_EconSectByGas-CA_Emissions_2014_2023_v4.csv",
         )
 
     # @classmethod
@@ -201,6 +205,7 @@ class DataReaders:
     emissions: EmissionsReader
     emission_fractions: Optional[EmissionsFractionReader] = None
     exo_prices: Optional[FirmExoPricesReader] = None
+    ch4_emissions: Optional[CH4EmissionsReaderCAN] = None
     regions_dict: Optional[dict[Country, list[Region]]] = None
 
     @classmethod
@@ -297,7 +302,7 @@ class DataReaders:
 
             if simulation_year != 2014:
                 raise ValueError("Only 2014 is supported for this reader.")
-            disagg_path = raw_data_path / "icio" / "sectoral_disagg_CAN_2014_v2.csv"
+            disagg_path = raw_data_path / "icio" / "icio_can_2014_disagg.csv"
             df = pd.read_csv(disagg_path, header=[0, 1], index_col=[0, 1])
             icio[simulation_year].iot = df
             industries = df.loc["ROW"].index.unique()
@@ -472,6 +477,10 @@ class DataReaders:
         if datapaths.firm_prices_path is not None and datapaths.firm_prices_path.exists():
             exo_prices = FirmExoPricesReader.read_from_raw_data(datapaths.firm_prices_path)
 
+        ch4_emissions = None
+        if datapaths.ch4_emissions_path is not None and datapaths.ch4_emissions_path.exists():
+            ch4_emissions = CH4EmissionsReaderCAN.read_data(datapaths.ch4_emissions_path)
+
         return cls(
             icio=icio,
             wiod_sea=wiod_sea,
@@ -490,6 +499,7 @@ class DataReaders:
             emissions=emissions,
             emission_fractions=emission_fractions,
             exo_prices=exo_prices,
+            ch4_emissions=ch4_emissions,
             regions_dict=regions_dict,
         )
 
