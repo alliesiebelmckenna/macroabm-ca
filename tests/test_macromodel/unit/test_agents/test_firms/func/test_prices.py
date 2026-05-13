@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from macro_data.readers.exo_prices.exo_prices_reader import FirmExoPrices, FirmExoPricesReader
-from macromodel.agents.firms.func.prices import DefaultPriceSetter, FirmExogenousPriceSetter
+from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPrices, SectorExoPricesReader
+from macromodel.agents.firms.func.prices import DefaultPriceSetter, SectorExogenousPriceSetter
 
 N_FIRMS = 4
 # Two firms per industry: indices 0,1 → B05a; indices 2,3 → C19
@@ -35,42 +35,42 @@ PRICE_KWARGS = dict(
 )
 
 
-def _make_exo_prices(industries: list[str]) -> FirmExoPrices:
+def _make_exo_prices(industries: list[str]) -> SectorExoPrices:
     """Price path that rises from 1.0 (2013) to 2.0 (2030) for each industry."""
     df = pd.DataFrame({ind: [1.0, 2.0] for ind in industries}, index=[2013, 2030])
-    reader = FirmExoPricesReader(prices=df)
-    exo = FirmExoPrices.from_reader(reader, initial_year=2014)
+    reader = SectorExoPricesReader(prices=df)
+    exo = SectorExoPrices.from_reader(reader, initial_year=2014)
     # per-firm base prices (one value per firm, indexed by firm index)
     exo.initial_model_prices = np.ones(N_FIRMS)
     return exo
 
 
-class TestFirmExoPricesReader:
+class TestSectorExoPricesReader:
     def test_read_from_csv(self, tmp_path):
         csv = "year,B05a,C19\n2013,100.0,80.0\n2014,110.0,90.0\n2030,130.0,110.0\n"
         p = tmp_path / "firm_prices.csv"
         p.write_text(csv)
-        reader = FirmExoPricesReader.read_from_raw_data(p)
+        reader = SectorExoPricesReader.read_from_raw_data(p)
         assert reader.prices is not None
         assert list(reader.prices.columns) == ["B05a", "C19"]
         assert reader.prices.loc[2014, "B05a"] == pytest.approx(110.0)
 
     def test_missing_file_returns_none(self, tmp_path):
-        reader = FirmExoPricesReader.read_from_raw_data(tmp_path / "missing.csv")
+        reader = SectorExoPricesReader.read_from_raw_data(tmp_path / "missing.csv")
         assert reader.prices is None
 
     def test_from_reader_copies_dataframe(self):
         df = pd.DataFrame({"B05a": [1.0, 2.0]}, index=[2013, 2030])
-        exo = FirmExoPrices.from_reader(FirmExoPricesReader(prices=df), initial_year=2015)
+        exo = SectorExoPrices.from_reader(SectorExoPricesReader(prices=df), initial_year=2015)
         assert exo.prices is df
         assert exo.initial_year == 2015
         assert exo.initial_model_prices is None
 
 
-class TestFirmExogenousPriceSetter:
-    def _make_setter(self) -> FirmExogenousPriceSetter:
-        setter = FirmExogenousPriceSetter(**DEFAULT_PARAMS)
-        setter.industries = INDUSTRIES
+class TestSectorExogenousPriceSetter:
+    def _make_setter(self) -> SectorExogenousPriceSetter:
+        setter = SectorExogenousPriceSetter(**DEFAULT_PARAMS)
+        setter.overriden_industries = INDUSTRIES
         return setter
 
     def test_no_exo_prices_matches_default(self):

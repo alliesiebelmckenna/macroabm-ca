@@ -209,40 +209,57 @@ class DefaultPriceSetter(PriceSetter):
         )
 
 
-class FirmExogenousPriceSetter(DefaultPriceSetter):
+class SectorExogenousPriceSetter(DefaultPriceSetter):
     """Price setter that overrides selected industries with exogenous price paths.
 
     All industries not listed in the price file follow the default endogenous
-    price-setting rule. For listed industries, prices are replaced by a
-    normalised exogenous price path:
+    price-setting rule. For listed industries, every firm belonging to that
+    industry receives the same normalised sectoral price path:
 
         price[t] = initial_model_price * (file_price[t] / file_price[initial_year])
 
+    This is effectively a sectoral price: all firms in an overridden industry
+    move together. The initial_model_price anchors each firm individually so
+    that firms with different starting prices maintain their relative levels.
+
     The input CSV must have years as the index and industry names as columns.
-    Industry positions are resolved at runtime from their names.
+    Industry positions are resolved at runtime from their names, so multiple
+    firms per industry are handled automatically.
 
     Attributes:
-        firm_exo_prices: FirmExoPrices container (injected after instantiation).
-        industries: Ordered list of industry names matching the firms array
-            (injected after instantiation).
+        firm_exo_prices: SectorExoPrices container holding sector-level price
+            trajectories (injected after instantiation).
+        overriden_industries: Per-firm ordered list of sector names matching
+            the firms array (injected after instantiation). One entry per firm;
+            all firms sharing a sector name receive the same exogenous price path.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.firm_exo_prices = None
-        self.industries: list[str] = []
+        self.overriden_industries: list[str] = []
 
     def _indices_for(self, industry_name: str) -> list[int]:
-        """Return all firm array indices whose industry matches industry_name."""
-        return [i for i, name in enumerate(self.industries) if name == industry_name]
+        """Return all firm array indices belonging to the given sector."""
+        return [i for i, name in enumerate(self.overriden_industries) if name == industry_name]
 
     def _normalised_price(self, industry_name: str, current_time: int) -> float:
-        """Interpolate the exogenous price for an industry and normalise to the initial year."""
+        """Interpolate the exogenous price for an industry and normalise to the initial year.
+
+        Converts the zero-based quarterly step index to a fractional calendar year,
+        then linearly interpolates the CSV price series at that point and divides by
+        the value at initial_year to obtain a dimensionless ratio.
+
+        The time conversion: t=0 maps to Q4 of (initial_year - 1); t=1 maps to Q1
+        of initial_year, and so on in quarterly increments of 0.25 years.
+        """
         initial_year = self.firm_exo_prices.initial_year
         series = self.firm_exo_prices.prices[industry_name]
         years = series.index.astype(float).values
         prices = series.values.astype(float)
         fn = interp1d(years, prices)
+        # Convert zero-based quarterly step to fractional calendar year.
+        # Subtracting 0.25 shifts t=1 to align with Q1 of initial_year.
         yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
         return float(fn(yr)) / float(fn(initial_year))
 
@@ -265,6 +282,29 @@ class FirmExogenousPriceSetter(DefaultPriceSetter):
         min_inflation: float = -0.1,
         max_inflation: float = 0.1,
     ) -> np.ndarray:
+        """Compute prices, overriding listed sectors with exogenous sector paths.
+
+        First computes the full endogenous price array via DefaultPriceSetter,
+        then replaces the price of every firm belonging to an overridden sector
+        with the normalised exogenous sector price:
+
+            price[i] = base_prices[i] * (sector_price[t] / sector_price[initial_year])
+
+        The sector price trajectory is the same for all firms in that sector;
+        base_prices (from initial_model_prices if available, otherwise
+        prev_average_good_prices) anchors each firm individually so relative
+        price levels within a sector are preserved. Firms in non-listed sectors
+        are unchanged.
+
+        Args:
+            [same as PriceSetter.compute_price]
+            min_inflation: Lower bound on endogenous inflation rates. Default -0.1.
+            max_inflation: Upper bound on endogenous inflation rates. Default 0.1.
+
+        Returns:
+            np.ndarray: Per-firm prices; firms in overridden sectors follow the
+                exogenous sector path, all others follow the default endogenous rule.
+        """
         price = super().compute_price(
             prev_prices=prev_prices,
             current_estimated_ppi_inflation=current_estimated_ppi_inflation,
@@ -284,7 +324,7 @@ class FirmExogenousPriceSetter(DefaultPriceSetter):
             max_inflation=max_inflation,
         )
 
-        if self.firm_exo_prices is None or len(self.industries) == 0:
+        if self.firm_exo_prices is None or len(self.overriden_industries) == 0:
             return price
 
         base_prices = (
@@ -294,7 +334,7 @@ class FirmExogenousPriceSetter(DefaultPriceSetter):
         )
 
         for industry_name in self.firm_exo_prices.prices.columns:
-            if industry_name not in self.industries:
+            if industry_name not in self.overriden_industries:
                 continue
             ratio = self._normalised_price(industry_name, current_time)
             for idx in self._indices_for(industry_name):

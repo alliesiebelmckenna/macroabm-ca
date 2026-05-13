@@ -1,4 +1,4 @@
-"""Reader and container for exogenous firm price data."""
+"""Reader and container for exogenous sector price data."""
 
 from __future__ import annotations
 
@@ -11,18 +11,20 @@ import pandas as pd
 
 
 @dataclass
-class FirmExoPrices:
-    """Container for exogenous firm price paths.
+class SectorExoPrices:
+    """Container for exogenous sector price trajectories.
 
-    Holds a DataFrame of price trajectories keyed by industry name.
-    Each column is an industry; the index is years. Prices are normalised
-    to initial_year at runtime by FirmExogenousPriceSetter.
+    Holds a DataFrame of price trajectories keyed by industry (sector) name.
+    Each column is a sector; the index is years. Prices are sector-level:
+    all firms within a listed sector follow the same normalised trajectory,
+    computed at runtime by SectorExogenousPriceSetter.
 
     Attributes:
-        prices: DataFrame with years as index and industry names as columns.
+        prices: DataFrame with years as index and sector names as columns.
         initial_year: Base year for price normalisation.
-        initial_model_prices: Per-firm base prices injected from the model
-            before the price setter is used.
+        initial_model_prices: Per-firm anchor prices injected from the model
+            at construction time; each firm is scaled by its own anchor so
+            relative price levels within a sector are preserved.
     """
 
     prices: Optional[pd.DataFrame] = None
@@ -37,31 +39,32 @@ class FirmExoPrices:
     @classmethod
     def from_reader(
         cls,
-        reader: FirmExoPricesReader,
+        reader: SectorExoPricesReader,
         initial_year: int = 2014,
-    ) -> FirmExoPrices:
-        """Build a FirmExoPrices container from a reader.
+    ) -> SectorExoPrices:
+        """Build a SectorExoPrices container from a reader.
 
         Args:
-            reader: Loaded FirmExoPricesReader.
+            reader: Loaded SectorExoPricesReader.
             initial_year: Base year for price normalisation.
 
         Returns:
-            FirmExoPrices container ready to be passed to Firms.
+            SectorExoPrices container ready to be passed to the model.
         """
         return cls(prices=reader.prices, initial_year=initial_year)
 
 
 @dataclass
-class FirmExoPricesReader:
-    """Reader for a single exogenous firm prices CSV.
+class SectorExoPricesReader:
+    """Reader for a single exogenous sector prices CSV.
 
-    The CSV must have years as the row index and industry codes as column
-    headers. Column names must match the ISIC Rev. 4 codes used by the model —
-    either aggregated (e.g. "D", "B", "C19") or detailed (e.g. "B05", "C19",
-    "D") depending on the industries list the model is configured with.
-    Values are prices in any consistent unit; the price setter normalises them
-    to the initial year automatically.
+    The CSV must have years as the row index and sector (industry) codes as
+    column headers. Column names must match the ISIC Rev. 4 codes used by the
+    model — either aggregated (e.g. "D", "B", "C19") or detailed (e.g. "B05",
+    "C19", "D") depending on the industries list the model is configured with.
+    Each column represents a sector-level price trajectory; the setter applies
+    the same normalised path to all firms within that sector. Values are prices
+    in any consistent unit; the setter normalises them to the initial year.
 
     Example CSV layout (aggregated industries, initial_year=2014):
 
@@ -85,14 +88,14 @@ class FirmExoPricesReader:
     def read_from_raw_data(
         cls,
         prices_path: Path | str,
-    ) -> FirmExoPricesReader:
-        """Load the firm prices CSV from disk.
+    ) -> SectorExoPricesReader:
+        """Load the sector prices CSV from disk.
 
         Args:
             prices_path: Path to the CSV file (index_col=0 assumed).
 
         Returns:
-            FirmExoPricesReader with loaded DataFrame (None if file absent).
+            SectorExoPricesReader with loaded DataFrame (None if file absent).
         """
         if isinstance(prices_path, str):
             prices_path = Path(prices_path)

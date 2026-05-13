@@ -1,3 +1,3 @@
-from macro_data.readers.exo_prices.exo_prices_reader import FirmExoPrices, FirmExoPricesReader
+from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPrices, SectorExoPricesReader
 
-__all__ = ["FirmExoPrices", "FirmExoPricesReader"]
+__all__ = ["SectorExoPrices", "SectorExoPricesReader"]

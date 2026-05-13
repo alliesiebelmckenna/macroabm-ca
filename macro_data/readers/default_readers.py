@@ -41,7 +41,7 @@ from macro_data.readers.economic_data.policy_rates import PolicyRatesReader
 from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
 from macro_data.readers.emissions.emissions_reader import CH4EmissionsReaderCAN, EmissionsReader
-from macro_data.readers.exo_prices.exo_prices_reader import FirmExoPricesReader
+from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPricesReader
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
     get_investment_fractions,
@@ -204,7 +204,7 @@ class DataReaders:
     compustat_banks: CompustatBanksReader
     emissions: EmissionsReader
     emission_fractions: Optional[EmissionsFractionReader] = None
-    exo_prices: Optional[FirmExoPricesReader] = None
+    exo_prices: Optional[SectorExoPricesReader] = None
     ch4_emissions: Optional[CH4EmissionsReaderCAN] = None
     regions_dict: Optional[dict[Country, list[Region]]] = None
 
@@ -475,7 +475,7 @@ class DataReaders:
 
         exo_prices = None
         if datapaths.firm_prices_path is not None and datapaths.firm_prices_path.exists():
-            exo_prices = FirmExoPricesReader.read_from_raw_data(datapaths.firm_prices_path)
+            exo_prices = SectorExoPricesReader.read_from_raw_data(datapaths.firm_prices_path)
 
         ch4_emissions = None
         if datapaths.ch4_emissions_path is not None and datapaths.ch4_emissions_path.exists():

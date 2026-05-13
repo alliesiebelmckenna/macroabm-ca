@@ -22,7 +22,7 @@ class ExcessDemand(BaseModel):
 
 
 class Prices(BaseModel):
-    name: Literal["InflationRoWPriceSetter", "FirmExogenousROWPriceSetter"] = "InflationRoWPriceSetter"
+    name: Literal["InflationRoWPriceSetter", "SectorExogenousROWPriceSetter"] = "InflationRoWPriceSetter"
     path_name: str = "prices"
     parameters: dict = {}
 

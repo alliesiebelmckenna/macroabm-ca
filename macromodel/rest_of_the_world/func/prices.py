@@ -86,34 +86,51 @@ class InflationRoWPriceSetter(RoWPriceSetter):
         )
 
 
-class FirmExogenousROWPriceSetter(InflationRoWPriceSetter):
+class SectorExogenousROWPriceSetter(InflationRoWPriceSetter):
     """ROW price setter that overrides selected industries with exogenous price paths.
 
     Non-overridden industries follow the default inflation-adjustment rule.
-    Overridden industries use a normalised exogenous price path:
+    Overridden industries use a normalised exogenous sectoral price path:
 
         price[t] = initial_price[i] * (file_price[t] / file_price[initial_year])
 
+    All ROW firms in an overridden industry receive the same path, anchored to
+    their individual initial_price so relative price levels are preserved.
+
     The input CSV must have years as the index and industry codes as columns.
+    Industry positions are resolved at runtime from their names, so multiple
+    firms per industry are handled automatically.
 
     Attributes:
-        firm_exo_prices: FirmExoPrices container (injected after instantiation).
-        industries: Ordered list of industry names matching the ROW price array
-            (injected after instantiation).
+        firm_exo_prices: SectorExoPrices container holding sector-level price
+            trajectories (injected after instantiation).
+        overriden_industries: Per-firm ordered list of sector names matching
+            the ROW price array (injected after instantiation). One entry per
+            firm; all firms sharing a sector name receive the same exogenous path.
     """
 
     def __init__(self):
         self.firm_exo_prices = None
-        self.industries: list[str] = []
+        self.overriden_industries: list[str] = []
         self._call_count: int = 0
 
     def _normalised_price(self, industry_name: str, current_time: int) -> float:
-        """Interpolate the exogenous price for an industry and normalise to the initial year."""
+        """Interpolate the exogenous price for an industry and normalise to the initial year.
+
+        Converts the zero-based quarterly step index to a fractional calendar year,
+        then linearly interpolates the CSV price series at that point and divides by
+        the value at initial_year to obtain a dimensionless ratio.
+
+        The time conversion: t=0 maps to Q4 of (initial_year - 1); t=1 maps to Q1
+        of initial_year, and so on in quarterly increments of 0.25 years.
+        """
         initial_year = self.firm_exo_prices.initial_year
         series = self.firm_exo_prices.prices[industry_name]
         years = series.index.astype(float).values
         prices = series.values.astype(float)
         fn = interp1d(years, prices, bounds_error=False, fill_value="extrapolate")
+        # Convert zero-based quarterly step to fractional calendar year.
+        # Subtracting 0.25 shifts t=1 to align with Q1 of initial_year.
         yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
         return float(fn(yr)) / float(fn(initial_year))
 
@@ -123,6 +140,28 @@ class FirmExogenousROWPriceSetter(InflationRoWPriceSetter):
         aggregate_country_price_index: float,
         adjustment_speed: float,
     ) -> np.ndarray:
+        """Compute ROW prices, overriding listed sectors with exogenous sector paths.
+
+        First computes the full inflation-adjusted price array via
+        InflationRoWPriceSetter, then replaces the price of every ROW firm
+        belonging to an overridden sector with the normalised exogenous sector price:
+
+            price[i] = initial_price[i] * (sector_price[t] / sector_price[initial_year])
+
+        The sector price trajectory is the same for all firms in that sector;
+        initial_price anchors each firm individually so relative price levels
+        within a sector are preserved. Call count is used as the time index since
+        the ROW interface does not receive an explicit current_time argument.
+
+        Args:
+            initial_price: Per-firm anchor prices for each ROW firm.
+            aggregate_country_price_index: Domestic price level (used by default rule).
+            adjustment_speed: Price adjustment speed parameter (used by default rule).
+
+        Returns:
+            np.ndarray: Per-firm ROW prices; firms in overridden sectors follow the
+                exogenous sector path, all others follow the inflation-adjustment rule.
+        """
         price = super().compute_price(
             initial_price=initial_price,
             aggregate_country_price_index=aggregate_country_price_index,
@@ -132,14 +171,14 @@ class FirmExogenousROWPriceSetter(InflationRoWPriceSetter):
         current_time = self._call_count
         self._call_count += 1
 
-        if self.firm_exo_prices is None or self.firm_exo_prices.prices is None or len(self.industries) == 0:
+        if self.firm_exo_prices is None or self.firm_exo_prices.prices is None or len(self.overriden_industries) == 0:
             return price
 
         for industry_name in self.firm_exo_prices.prices.columns:
-            if industry_name not in self.industries:
+            if industry_name not in self.overriden_industries:
                 continue
             ratio = self._normalised_price(industry_name, current_time)
-            for idx in [i for i, name in enumerate(self.industries) if name == industry_name]:
+            for idx in [i for i, name in enumerate(self.overriden_industries) if name == industry_name]:
                 price[idx] = initial_price[idx] * ratio
 
         return price
