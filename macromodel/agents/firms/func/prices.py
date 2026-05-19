@@ -243,24 +243,19 @@ class SectorExogenousPriceSetter(DefaultPriceSetter):
         """Return all firm array indices belonging to the given sector."""
         return [i for i, name in enumerate(self.overriden_industries) if name == industry_name]
 
-    def _normalised_price(self, industry_name: str, current_time: int) -> float:
+    def _normalised_price(self, industry_name: str, current_quarter: int) -> float:
         """Interpolate the exogenous price for an industry and normalise to the initial year.
 
-        Converts the zero-based quarterly step index to a fractional calendar year,
-        then linearly interpolates the CSV price series at that point and divides by
-        the value at initial_year to obtain a dimensionless ratio.
-
-        The time conversion: t=0 maps to Q4 of (initial_year - 1); t=1 maps to Q1
-        of initial_year, and so on in quarterly increments of 0.25 years.
+        current_quarter is 1-based (quarter 1 = Q1 of initial_year).
+        Converts the quarterly index to a fractional calendar year, linearly interpolates
+        the CSV price series, and divides by the value at initial_year.
         """
         initial_year = self.firm_exo_prices.initial_year
         series = self.firm_exo_prices.prices[industry_name]
         years = series.index.astype(float).values
         prices = series.values.astype(float)
         fn = interp1d(years, prices)
-        # Convert zero-based quarterly step to fractional calendar year.
-        # Subtracting 0.25 shifts t=1 to align with Q1 of initial_year.
-        yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
+        yr = initial_year + (current_quarter - 1) / 4
         return float(fn(yr)) / float(fn(initial_year))
 
     def compute_price(
@@ -336,7 +331,7 @@ class SectorExogenousPriceSetter(DefaultPriceSetter):
         for industry_name in self.firm_exo_prices.prices.columns:
             if industry_name not in self.overriden_industries:
                 continue
-            ratio = self._normalised_price(industry_name, current_time)
+            ratio = self._normalised_price(industry_name, current_quarter=current_time)
             for idx in self._indices_for(industry_name):
                 price[idx] = base_prices[idx] * ratio
 

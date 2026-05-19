@@ -114,24 +114,19 @@ class SectorExogenousROWPriceSetter(InflationRoWPriceSetter):
         self.overriden_industries: list[str] = []
         self._call_count: int = 0
 
-    def _normalised_price(self, industry_name: str, current_time: int) -> float:
+    def _normalised_price(self, industry_name: str, current_quarter: int) -> float:
         """Interpolate the exogenous price for an industry and normalise to the initial year.
 
-        Converts the zero-based quarterly step index to a fractional calendar year,
-        then linearly interpolates the CSV price series at that point and divides by
-        the value at initial_year to obtain a dimensionless ratio.
-
-        The time conversion: t=0 maps to Q4 of (initial_year - 1); t=1 maps to Q1
-        of initial_year, and so on in quarterly increments of 0.25 years.
+        current_quarter is 1-based (quarter 1 = Q1 of initial_year).
+        Converts the quarterly index to a fractional calendar year, linearly interpolates
+        the CSV price series, and divides by the value at initial_year.
         """
         initial_year = self.firm_exo_prices.initial_year
         series = self.firm_exo_prices.prices[industry_name]
         years = series.index.astype(float).values
         prices = series.values.astype(float)
         fn = interp1d(years, prices, bounds_error=False, fill_value="extrapolate")
-        # Convert zero-based quarterly step to fractional calendar year.
-        # Subtracting 0.25 shifts t=1 to align with Q1 of initial_year.
-        yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
+        yr = initial_year + (current_quarter - 1) / 4
         return float(fn(yr)) / float(fn(initial_year))
 
     def compute_price(
@@ -168,7 +163,7 @@ class SectorExogenousROWPriceSetter(InflationRoWPriceSetter):
             adjustment_speed=adjustment_speed,
         )
 
-        current_time = self._call_count
+        current_quarter = self._call_count
         self._call_count += 1
 
         if self.firm_exo_prices is None or self.firm_exo_prices.prices is None or len(self.overriden_industries) == 0:
@@ -177,7 +172,7 @@ class SectorExogenousROWPriceSetter(InflationRoWPriceSetter):
         for industry_name in self.firm_exo_prices.prices.columns:
             if industry_name not in self.overriden_industries:
                 continue
-            ratio = self._normalised_price(industry_name, current_time)
+            ratio = self._normalised_price(industry_name, current_quarter)
             for idx in [i for i, name in enumerate(self.overriden_industries) if name == industry_name]:
                 price[idx] = initial_price[idx] * ratio
 

@@ -160,7 +160,11 @@ class RestOfTheWorld(Agent):
         """
         functions = functions_from_model(model=configuration.functions, loc="macromodel.rest_of_the_world")
 
-        if isinstance(functions.get("prices"), SectorExogenousROWPriceSetter) and firm_exo_prices is not None and industries is not None:
+        if (
+            isinstance(functions.get("prices"), SectorExogenousROWPriceSetter)
+            and firm_exo_prices is not None
+            and industries is not None
+        ):
             functions["prices"].firm_exo_prices = firm_exo_prices
             functions["prices"].overriden_industries = list(industries)
 
