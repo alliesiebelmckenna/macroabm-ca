@@ -1,0 +1,60 @@
+name: Run Canada simulation
+
+on:
+  workflow_dispatch:          # manual trigger from GitHub UI
+  push:
+    branches:
+      - main
+    paths:
+      - "macromodel/**"
+      - "macro_data/**"
+      - "macrocalib/**"
+      - "test_run/**"
+  pull_request:
+    paths:
+      - "macromodel/**"
+      - "macro_data/**"
+      - "macrocalib/**"
+      - "test_run/**"
+
+jobs:
+  simulate-canada:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install h5py dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev
+
+      - name: Install project dependencies
+        run: uv sync --python ${{ matrix.python-version }} --extra dev
+
+      - name: Run Canada simulation
+        run: uv run python test_run/test_run_simulation_CAN.py
+
+      - name: List output
+        if: always()
+        run: ls -lah output/
+
+      - name: Upload simulation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canada-simulation-output
+          path: output/
+          retention-days: 7
