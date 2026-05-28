@@ -160,3 +160,7 @@ debugging_experiments/
 dev/
 inet-macro-dev/
 macro-dev/
+
+# FIN/FREDA-related folders
+spoof_data/freda
+^freda*
