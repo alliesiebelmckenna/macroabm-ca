@@ -4,6 +4,7 @@ Usage:
     uv run python run_simulation.py                    # France (default)
     uv run python run_simulation.py DEU                # Germany (EU - no proxy needed)
     uv run python run_simulation.py CAN                # Canada (auto-uses FRA as proxy)
+    uv run python run_simulation.py CAN --proxy DEU    # Canada with Germany as proxy
     uv run python run_simulation.py USA --proxy FRA    # USA with France as proxy
     uv run python run_simulation.py GBR --proxy DEU    # UK with Germany as proxy
     uv run python run_simulation.py CAN --scale 5000   # Custom scale
@@ -80,7 +81,7 @@ def main():
 
     # Special handling for Canada
     is_canada = country == "CAN"
-    use_disagg_can = is_canada and proxy_dict == {"CAN": "FRA"}
+    use_disagg_can = is_canada and proxy_country in eu_countries
 
     if is_canada and not use_disagg_can:
         print("  Note: Using standard Canada configuration")
