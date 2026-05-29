@@ -3,11 +3,7 @@
 name: Style Check
 
 on:
-  pull_request:
-    # Run on PRs to any branch
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 
 jobs:

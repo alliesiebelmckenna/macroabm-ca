@@ -1,4 +1,4 @@
-name: Run Canada simulation
+name: Run Canada and France simulations
 
 on:
   workflow_dispatch:          # manual trigger from GitHub UI
@@ -18,11 +18,12 @@ on:
       - "test_run/**"
 
 jobs:
-  simulate-canada:
+  simulate:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.12"]
+        country: [CAN, FRA]
 
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +45,8 @@ jobs:
       - name: Install project dependencies
         run: uv sync --python ${{ matrix.python-version }} --extra dev
 
-      - name: Run Canada simulation
-        run: uv run python test_run/test_run_simulation_CAN.py
+      - name: Run ${{ matrix.country }} simulation
+        run: uv run python test_run/run_simulation.py ${{ matrix.country }}
 
       - name: List output
         if: always()
@@ -55,6 +56,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canada-simulation-output
+          name: ${{ matrix.country }}-simulation-output
           path: output/
           retention-days: 7
