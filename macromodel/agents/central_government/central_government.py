@@ -13,7 +13,7 @@ The central government plays a crucial role in:
 - Public finance management
 """
 
-from typing import Any
+from typing import Any, Optional
 
 import h5py
 import numpy as np
@@ -24,10 +24,16 @@ from macromodel.agents.agent import Agent
 from macromodel.agents.central_government.central_government_ts import (
     create_central_government_timeseries,
 )
+from macromodel.agents.central_government.pit_pools import (
+    PitContext,
+    build_credit_base_pool,
+    build_taxable_income_pool,
+)
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.configurations import CentralGovernmentConfiguration
 from macromodel.timeseries import TimeSeries
 from macromodel.util.function_mapping import functions_from_model, update_functions
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
 
 
 class CentralGovernment(Agent):
@@ -82,6 +88,20 @@ class CentralGovernment(Agent):
         )
         self.functions = functions
 
+        # Snapshot base thresholds for CPI inflation indexing.
+        # When step_pit_brackets() is called mid-simulation, the stored
+        # nominal values are compound-inflated and written back to states.
+        if "pit_thresholds" in states:
+            self.pit_base_thresholds = states["pit_thresholds"].copy()
+        else:
+            self.pit_base_thresholds = None
+
+        # Snapshot base taxable-income deduction for CPI inflation indexing.
+        self.pit_base_deductions: Optional[float] = states.get("pit_taxable_income_deductions")
+
+        # Snapshot base tax credits (list of dicts) for CPI indexing.
+        self.pit_base_tax_credits: Optional[list[dict]] = states.get("pit_tax_credits")
+
     @classmethod
     def from_pickled_agent(
         cls,
@@ -129,6 +149,30 @@ class CentralGovernment(Agent):
             "unemployment_benefits_model": synthetic_central_government.unemployment_benefits_model,
             "other_benefits_model": synthetic_central_government.other_benefits_model,
         }
+
+        # Progressive PIT schedule (optional — None means use flat Income Tax).
+        # Activated for any country/region whose config sets pit_brackets.
+        if configuration.pit_brackets is not None:
+            brackets = np.array(configuration.pit_brackets, dtype=float)
+            states["pit_thresholds"] = brackets[:, 0]
+            states["pit_rates"] = brackets[:, 1]
+            if configuration.pit_taxable_income_deductions is not None:
+                states["pit_taxable_income_deductions"] = configuration.pit_taxable_income_deductions
+            if configuration.pit_tax_credits is not None:
+                states["pit_tax_credits"] = [
+                    {
+                        "kind": t.kind,
+                        "amount": t.amount,
+                        "indexing": t.indexing,
+                        "age_min": t.eligibility_age_min,
+                        "clawback_start": t.clawback_start,
+                        "clawback_cap": t.clawback_cap,
+                    }
+                    for t in configuration.pit_tax_credits
+                ]
+
+        # Couple rental income split for progressive PIT
+        states["couple_rental_income_split"] = configuration.couple_rental_income_split
 
         data = (synthetic_central_government.central_gov_data.astype(float)).rename_axis("Central Government ID")
 
@@ -245,16 +289,26 @@ class CentralGovernment(Agent):
         current_ind_employee_income: np.ndarray,
         current_total_rent_paid: float,
         current_income_financial_assets: np.ndarray,
-        current_ind_activity: np.ndarray,
-        current_ind_realised_cons: np.ndarray,
-        current_bank_profits: np.ndarray,
-        current_firm_production: np.ndarray,
-        current_firm_price: np.ndarray,
-        current_firm_profits: np.ndarray,
-        current_firm_industries: np.ndarray,
-        current_household_new_real_wealth: np.ndarray,
-        taxes_less_subsidies_rates: np.ndarray,
-        current_total_exports: float,
+        current_ind_rental_income: np.ndarray | None = None,
+        current_ind_financial_income: np.ndarray | None = None,
+        current_ind_activity: np.ndarray = None,
+        current_ind_realised_cons: np.ndarray = None,
+        current_bank_profits: np.ndarray = None,
+        current_firm_production: np.ndarray = None,
+        current_firm_price: np.ndarray = None,
+        current_firm_profits: np.ndarray = None,
+        current_firm_industries: np.ndarray = None,
+        current_household_new_real_wealth: np.ndarray = None,
+        taxes_less_subsidies_rates: np.ndarray = None,
+        current_total_exports: float = 0.0,
+        individuals_age: np.ndarray | None = None,
+        individuals_corr_households: np.ndarray | None = None,
+        households_type: np.ndarray | None = None,
+        households_n_adults: np.ndarray | None = None,
+        children_under_18_per_ind: np.ndarray | None = None,
+        children_under_6_per_ind: np.ndarray | None = None,
+        taxable_income_per_ind: np.ndarray | None = None,
+        credit_base_per_ind: np.ndarray | None = None,
     ) -> None:
         """Calculate all tax revenues for the current period.
 
@@ -264,10 +318,23 @@ class CentralGovernment(Agent):
         - Social insurance contributions
         - Capital formation and export taxes
 
+        Progressive PIT consumes two pre-assembled pools — taxable income
+        per individual (``taxable_income_per_ind``) and credit base per
+        individual (``credit_base_per_ind``) — built in the processing
+        phase (see :mod:`macromodel.agents.central_government.pit_pools`).
+        When they are not supplied (e.g. direct/unit-test calls), they are
+        assembled here from the raw income and household-context arguments
+        via the same shared builders, so behaviour is identical either way.
+
         Args:
-            current_ind_employee_income (np.ndarray): Employee incomes
-            current_total_rent_paid (float): Total rent payments
-            current_income_financial_assets (np.ndarray): Financial income
+            current_ind_employee_income (np.ndarray): Employee incomes per individual
+            current_total_rent_paid (float): Total rent paid by renters (scalar)
+            current_income_financial_assets (np.ndarray): Financial income per household
+            current_ind_rental_income (Optional[np.ndarray]): Gross rental income per individual.
+                Used only to assemble the taxable pool in the direct-call fallback (when
+                ``taxable_income_per_ind`` is not supplied); ignored when the pools are passed.
+            current_ind_financial_income (Optional[np.ndarray]): Financial income per individual.
+                Fallback-only, same as ``current_ind_rental_income``.
             current_ind_activity (np.ndarray): Individual activity status
             current_ind_realised_cons (np.ndarray): Consumption levels
             current_bank_profits (np.ndarray): Bank profits
@@ -278,6 +345,16 @@ class CentralGovernment(Agent):
             current_household_new_real_wealth (np.ndarray): New wealth
             taxes_less_subsidies_rates (np.ndarray): Net tax rates
             current_total_exports (float): Total exports
+            individuals_age (Optional[np.ndarray]): Age per individual
+            individuals_corr_households (Optional[np.ndarray]): Household ID per individual
+            households_type (Optional[np.ndarray]): HouseholdType enum per household
+            households_n_adults (Optional[np.ndarray]): Number of adults per household
+            children_under_18_per_ind (Optional[np.ndarray]): Children under 18 in individual's household
+            children_under_6_per_ind (Optional[np.ndarray]): Children under 6 in individual's household
+            taxable_income_per_ind (Optional[np.ndarray]): Pool A — pre-assembled
+                taxable income per individual. Built internally when omitted.
+            credit_base_per_ind (Optional[np.ndarray]): Pool B — pre-assembled
+                non-refundable credit base per individual. Built internally when omitted.
         """
         # Taxes on production
         self.ts.taxes_production.append(
@@ -303,24 +380,128 @@ class CentralGovernment(Agent):
         # Taxes on exports
         self.ts.taxes_exports.append([self.states["Export Tax"] * current_total_exports])
 
-        # Total wages of employed individuals
+        # Total wages of employed individuals (after Employee SI deduction —
+        # this is the standard taxable base for personal income tax)
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
-        # Taxes on income
-        self.ts.taxes_income.append(
-            [
+        # Personal income tax: progressive when a schedule is
+        # configured, otherwise flat on all income components.
+        pit_thresholds = self.states.get("pit_thresholds")
+        pit_rates = self.states.get("pit_rates")
+
+        if pit_thresholds is not None and pit_rates is not None:
+            # --- Progressive PIT on the two pre-assembled pools ---
+            # Pool A (taxable income) and Pool B (credit base) are normally
+            # built in the processing phase (country.py) and passed in.
+            # When either pool is omitted (direct / unit-test calls),
+            # assemble the missing one(s) here from the raw inputs via the
+            # shared pit_pools builders, so the result is identical
+            # regardless of caller.  Each pool is built independently:
+            # supplying taxable income alone must still apply configured
+            # credits (otherwise gross PIT would leak through).
+            if taxable_income_per_ind is None or credit_base_per_ind is None:
+                ctx = PitContext(
+                    employee_income=current_ind_employee_income,
+                    employee_si_rate=float(self.states["Employee Social Insurance Tax"]),
+                    rental_income=current_ind_rental_income,
+                    financial_income=current_ind_financial_income,
+                    individuals_age=individuals_age,
+                    individuals_corr_households=individuals_corr_households,
+                    households_type=households_type,
+                    households_n_adults=households_n_adults,
+                    children_under_18_per_ind=children_under_18_per_ind,
+                    children_under_6_per_ind=children_under_6_per_ind,
+                )
+                if taxable_income_per_ind is None:
+                    taxable_income_per_ind = build_taxable_income_pool(ctx)
+                if credit_base_per_ind is None:
+                    credit_base_per_ind = build_credit_base_pool(
+                        self.states.get("pit_tax_credits"),
+                        taxable_income_per_ind,
+                        ctx,
+                    )
+
+            total_income_tax = self.compute_pit(taxable_income_per_ind, credit_base_per_ind)
+        else:
+            # --- Flat tax (backward-compatible path) ---
+            total_income_tax = (
                 self.states["Income Tax"] * (1 - self.states["Employee Social Insurance Tax"]) * tot_wages_employed_ind
                 + self.states["Income Tax"] * current_total_rent_paid
-                + self.states["Income Tax"] * current_income_financial_assets.sum(),
-            ]
+                + self.states["Income Tax"] * current_income_financial_assets.sum()
+            )
+
+        self.ts.taxes_income.append([total_income_tax])
+
+        # Rental tax reported for the period.  This is a *reporting* figure
+        # (it feeds the GDP rent_received term), not extra revenue — the
+        # rental tax is already inside taxes_income.  Computed exactly as in
+        # the original model: the effective Income Tax rate (updated by
+        # compute_pit in the progressive path) on household rent paid.
+        self.ts.taxes_rental_income.append(
+            [self.states["Income Tax"] * current_total_rent_paid]
         )
-        self.ts.taxes_rental_income.append([self.states["Income Tax"] * current_total_rent_paid])
 
         # Taxes on employer social insurance
         self.ts.taxes_employer_si.append([self.states["Employer Social Insurance Tax"] * tot_wages_employed_ind])
 
         # Taxes on employee social insurance
         self.ts.taxes_employee_si.append([self.states["Employee Social Insurance Tax"] * tot_wages_employed_ind])
+
+    def compute_pit(
+        self,
+        taxable_income_per_ind: np.ndarray,
+        credit_base_per_ind: np.ndarray | None = None,
+    ) -> float:
+        """Apply fixed PIT policy to the two assembled pools.
+
+        This is the government's tax *core*. It applies taxable-income
+        deductions, the progressive bracket schedule, and values the
+        credit base at the bottom marginal rate — then floors net tax at
+        zero. It never references individual income streams or credit
+        kinds, so adding either (in
+        :mod:`macromodel.agents.central_government.pit_pools`) leaves this
+        method untouched.
+
+        As a side effect, the scalar ``states["Income Tax"]`` effective
+        rate is updated to the schedule-implied average so that
+        behavioural decisions (wage-setting, after-tax income, rental
+        income) stay aligned with the progressive schedule.
+
+        Args:
+            taxable_income_per_ind: Pool A — taxable income per individual.
+            credit_base_per_ind: Pool B — summed non-refundable credit base
+                per individual (``None`` or zeros when no credits apply).
+
+        Returns:
+            float: Total personal income tax revenue.
+        """
+        pit_thresholds = self.states["pit_thresholds"]
+        pit_rates = self.states["pit_rates"]
+
+        # Taxable-income deductions reduce the base before the brackets,
+        # so they can drop a filer into a lower bracket.
+        deductions = self.states.get("pit_taxable_income_deductions")
+        base_for_brackets = taxable_income_per_ind
+        if deductions is not None and deductions > 0:
+            base_for_brackets = np.maximum(0.0, taxable_income_per_ind - deductions)
+
+        pit_per_individual = compute_progressive_tax(
+            base_for_brackets, pit_thresholds, pit_rates
+        )
+
+        # Value the (non-refundable) credit base at the bottom marginal rate.
+        if credit_base_per_ind is not None:
+            pit_per_individual = np.maximum(
+                0.0, pit_per_individual - credit_base_per_ind * float(pit_rates[0])
+            )
+
+        total_income_tax = float(pit_per_individual.sum())
+
+        total_taxable_base = float(taxable_income_per_ind.sum())
+        if total_taxable_base > 0:
+            self.states["Income Tax"] = total_income_tax / total_taxable_base
+
+        return total_income_tax
 
     def compute_taxes_on_products(self) -> float:
         """Calculate total taxes on products and production.
@@ -340,6 +521,66 @@ class CentralGovernment(Agent):
             + self.ts.current("taxes_cf")[0]
             + self.ts.current("taxes_exports")[0]
         )
+
+    def step_pit_brackets(
+        self,
+        tax_year: int,
+        cpi_map: dict[int, float],
+        base_year: int,
+    ) -> None:
+        """Inflate PIT thresholds, tax credits, and taxable-income
+        deductions with compound CPI.
+
+        Recomputes ``states["pit_thresholds"]``,
+        ``states["pit_tax_credits"]``, and
+        ``states["pit_taxable_income_deductions"]`` by compounding annual
+        CPI inflation rates.  The nominal values stored at construction
+        are never modified — inflation is always computed from those
+        original values, making repeated calls safe.
+
+        Call this once per simulated year (every 4 quarterly timesteps)
+        to mirror real-world bracket indexation.
+
+        Args:
+            tax_year: Current tax year.
+            cpi_map: ``{year: inflation_rate}`` mapping (0.018 = 1.8 %).
+            base_year: Year whose thresholds are the nominal base.
+        """
+        if self.pit_base_thresholds is None:
+            return
+        if tax_year <= base_year or not cpi_map:
+            return
+
+        factor = 1.0
+        for y in range(base_year, tax_year):
+            rate = cpi_map.get(y)
+            if rate is not None:
+                factor *= 1.0 + rate
+
+        self.states["pit_thresholds"] = self.pit_base_thresholds * factor
+
+        if self.pit_base_deductions is not None:
+            self.states["pit_taxable_income_deductions"] = self.pit_base_deductions * factor
+
+        # CPI-inflate tax credit components (only those with indexing=True).
+        if self.pit_base_tax_credits is not None:
+            inflated = []
+            for tc in self.pit_base_tax_credits:
+                entry = {
+                    "kind": tc["kind"],
+                    "amount": tc["amount"] * factor if tc.get("indexing", True) else tc["amount"],
+                    "indexing": tc.get("indexing", True),
+                    "age_min": tc.get("age_min"),
+                }
+                # Only include clawback keys if they were in the base dict
+                if "clawback_start" in tc:
+                    tc_cs = tc["clawback_start"]
+                    entry["clawback_start"] = tc_cs * factor if (tc.get("indexing", True) and tc_cs is not None) else tc_cs
+                if "clawback_cap" in tc:
+                    tc_cc = tc["clawback_cap"]
+                    entry["clawback_cap"] = tc_cc * factor if (tc.get("indexing", True) and tc_cc is not None) else tc_cc
+                inflated.append(entry)
+            self.states["pit_tax_credits"] = inflated
 
     def compute_revenue(
         self,

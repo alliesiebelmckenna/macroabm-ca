@@ -29,7 +29,7 @@ allowing for flexible scenario analysis.
 
 from .bank_configuration import BankParameters, BanksConfiguration
 from .central_bank_configuration import CentralBankConfiguration
-from .central_government_configuration import CentralGovernmentConfiguration
+from .central_government_configuration import CentralGovernmentConfiguration, TaxCreditDef
 from .country_configuration import CountryConfiguration
 from .credit_market_configuration import CreditMarketConfiguration
 from .economy_configuration import EconomyConfiguration

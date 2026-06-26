@@ -31,6 +31,7 @@ from macromodel.configurations import (
     HouseholdsConfiguration,
     IndividualsConfiguration,
     RestOfTheWorldConfiguration,
+    TaxCreditDef,
 )
 from macromodel.country import Country
 from macromodel.economy import Economy
@@ -167,6 +168,85 @@ def test_central_government(datawrapper, test_individuals):
     central_government = CentralGovernment.from_pickled_agent(
         synthetic_central_government=synthetic_central_government,
         configuration=central_government_config,
+        country_name="FRA",
+        all_country_names=["FRA", "ROW"],
+        taxes_net_subsidies=taxes_less_subsidies,
+        tax_data=country.tax_data,
+        n_industries=n_industries,
+        number_of_unemployed_individuals=n_unemployed,
+    )
+
+    return central_government
+
+
+@pytest.fixture(scope="function", name="test_central_government_pit")
+def test_central_government_pit(datawrapper, test_individuals):
+    """CentralGovernment fixture with progressive PIT brackets enabled."""
+    country = datawrapper.synthetic_countries["FRA"]
+    synthetic_central_government = country.central_government
+
+    # BC-like progressive brackets: (threshold, rate) in agent-level units
+    pit_config = CentralGovernmentConfiguration(
+        pit_brackets=[
+            (37606, 0.0506),
+            (75213, 0.077),
+            (86354, 0.105),
+            (104858, 0.1229),
+            (150000, 0.147),
+            (float("inf"), 0.168),
+        ],
+    )
+
+    taxes_less_subsidies = country.industry_data["industry_vectors"]["Taxes Less Subsidies Rates"].values
+
+    n_industries = datawrapper.n_industries
+
+    n_unemployed = np.sum(test_individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED)
+
+    central_government = CentralGovernment.from_pickled_agent(
+        synthetic_central_government=synthetic_central_government,
+        configuration=pit_config,
+        country_name="FRA",
+        all_country_names=["FRA", "ROW"],
+        taxes_net_subsidies=taxes_less_subsidies,
+        tax_data=country.tax_data,
+        n_industries=n_industries,
+        number_of_unemployed_individuals=n_unemployed,
+    )
+
+    return central_government
+
+
+@pytest.fixture(scope="function", name="test_central_government_pit_full")
+def test_central_government_pit_full(datawrapper, test_individuals):
+    """CentralGovernment with full progressive PIT: brackets, tax credits,
+    and taxable-income deductions."""
+    country = datawrapper.synthetic_countries["FRA"]
+    synthetic_central_government = country.central_government
+
+    pit_config = CentralGovernmentConfiguration(
+        pit_brackets=[
+            (37606, 0.0506),
+            (75213, 0.077),
+            (86354, 0.105),
+            (104858, 0.1229),
+            (150000, 0.147),
+            (float("inf"), 0.168),
+        ],
+        pit_tax_credits=[
+            TaxCreditDef(kind="Personal Amount", amount=9869.0),
+        ],
+    )
+
+    taxes_less_subsidies = country.industry_data["industry_vectors"]["Taxes Less Subsidies Rates"].values
+
+    n_industries = datawrapper.n_industries
+
+    n_unemployed = np.sum(test_individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED)
+
+    central_government = CentralGovernment.from_pickled_agent(
+        synthetic_central_government=synthetic_central_government,
+        configuration=pit_config,
         country_name="FRA",
         all_country_names=["FRA", "ROW"],
         taxes_net_subsidies=taxes_less_subsidies,

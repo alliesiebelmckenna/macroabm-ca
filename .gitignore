@@ -163,3 +163,8 @@ macro-dev/
 
 # Local validation outputs from ad hoc model runs
 local_validation/
+
+# Model run outputs and local raw data (never commit)
+output/
+output_old/
+raw_data/

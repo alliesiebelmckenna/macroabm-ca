@@ -1,0 +1,10 @@
+﻿tax_year,credit_kind,credit_amount,clawback_start,cap,rate,clawback_rate,indexing
+2014,Personal Amount,9869,,,0.0506,,1
+2014,Age Amount,4426,32943,"62,450",0.0506,0.15,1
+2014,Spousal Amount,8450,845,9295,0.0506,,1
+2014,Equivalent To Spouse Amount,8450,,9295,0.0506,,1
+2014,CPP Amount,,,,0.0506,,1
+2014,EI Amount,,,,0.0506,,1
+2014,Pension Income Amount,1000,,,0.0506,,0
+2014,Child Amount Under 18,0,,,,,
+2014,Child Amount Under 6,0,,,,,

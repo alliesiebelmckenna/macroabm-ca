@@ -478,6 +478,36 @@ class Households(Agent):
             model=self.states["social_transfers_model"],
         )
 
+    def compute_gross_rental_income(
+        self,
+        housing_data: pd.DataFrame,
+    ) -> np.ndarray:
+        """Calculate gross (pre-tax) rental income from property ownership.
+
+        Computes total rent collected from tenants before any tax deduction.
+        Used for distributing rental income to individuals for progressive PIT.
+
+        Args:
+            housing_data (pd.DataFrame): Property market data
+
+        Returns:
+            np.ndarray: Gross rental income by household
+        """
+        housing_data_rented_out = housing_data.loc[
+            np.logical_and(
+                housing_data["Is Owner-Occupied"] == 0,
+                housing_data["Corresponding Inhabitant Household ID"] != -1,
+            )
+        ]
+        housing_data_rented_out_grouped = housing_data_rented_out.groupby("Corresponding Owner Household ID")[
+            "Rent"
+        ].sum()
+        rental_income = np.zeros(self.ts.current("n_households"))
+        rental_income[housing_data_rented_out_grouped.index.values] = (
+            housing_data_rented_out_grouped.values
+        )
+        return rental_income
+
     def compute_rental_income(
         self,
         housing_data: pd.DataFrame,
@@ -497,20 +527,100 @@ class Households(Agent):
         Returns:
             np.ndarray: Rental income by household
         """
-        housing_data_rented_out = housing_data.loc[
-            np.logical_and(
-                housing_data["Is Owner-Occupied"] == 0,
-                housing_data["Corresponding Inhabitant Household ID"] != -1,
-            )
-        ]
-        housing_data_rented_out_grouped = housing_data_rented_out.groupby("Corresponding Owner Household ID")[
-            "Rent"
-        ].sum()
-        rental_income = np.zeros(self.ts.current("n_households"))
-        rental_income[housing_data_rented_out_grouped.index.values] = (
-            1 - income_taxes
-        ) * housing_data_rented_out_grouped.values
-        return rental_income
+        gross = self.compute_gross_rental_income(housing_data)
+        return (1 - income_taxes) * gross
+
+    def distribute_rental_income_to_individuals(
+        self,
+        housing_data: pd.DataFrame,
+        corr_households: np.ndarray,
+        individual_employee_income: np.ndarray,
+        couple_rental_income_split: float,
+    ) -> np.ndarray:
+        """Distribute household gross rental income to constituent individuals.
+
+        Splitting rules:
+        - Single-adult households: 100% of rental income to the sole adult.
+        - Multi-adult households: the highest-earning adult receives
+          ``couple_rental_income_split`` of the household rental income,
+          the remaining adults split the rest equally.
+
+        Args:
+            housing_data (pd.DataFrame): Property market data
+            corr_households (np.ndarray): Individual→household mapping
+            individual_employee_income (np.ndarray): Wage income per individual
+            couple_rental_income_split (float): Fraction to highest earner
+
+        Returns:
+            np.ndarray: Gross rental income per individual
+        """
+        gross_rental = self.compute_gross_rental_income(housing_data)
+        n_adults = self.states["Number of Adults"]
+        n_individuals = len(corr_households)
+
+        rental_per_ind = np.zeros(n_individuals)
+
+        for hh_id in range(self.ts.current("n_households")):
+            hh_rental = gross_rental[hh_id]
+            if hh_rental <= 0:
+                continue
+
+            inds_in_hh = np.where(corr_households == hh_id)[0]
+            if len(inds_in_hh) == 0:
+                continue
+
+            n_adu = n_adults[hh_id]
+            if n_adu <= 1 or len(inds_in_hh) == 1:
+                # Single adult: all rental income to the sole individual
+                rental_per_ind[inds_in_hh[0]] += hh_rental
+            else:
+                # Multi-adult: split by income rank
+                per_ind_income = individual_employee_income[inds_in_hh]
+                sorted_inds = inds_in_hh[np.argsort(per_ind_income)][::-1]  # descending
+
+                # Highest earner gets couple_rental_income_split fraction
+                high_earner = sorted_inds[0]
+                rental_per_ind[high_earner] += couple_rental_income_split * hh_rental
+
+                # Remaining adults split the rest equally
+                remaining_adults = sorted_inds[1:]
+                n_remaining = len(remaining_adults)
+                if n_remaining > 0:
+                    remainder = (1.0 - couple_rental_income_split) * hh_rental
+                    rental_per_ind[remaining_adults] += remainder / n_remaining
+
+        return rental_per_ind
+
+    def distribute_financial_income_to_individuals(
+        self,
+        household_financial_income: np.ndarray,
+        corr_households: np.ndarray,
+        n_individuals: int,
+    ) -> np.ndarray:
+        """Distribute household financial asset income to constituent individuals.
+
+        Splits equally among adults in each household.
+
+        Args:
+            household_financial_income (np.ndarray): Financial income per household
+            corr_households (np.ndarray): Individual→household mapping
+            n_individuals (int): Total number of individuals
+
+        Returns:
+            np.ndarray: Financial asset income per individual
+        """
+        n_adults = self.states["Number of Adults"]
+        fin_income_per_ind = np.zeros(n_individuals)
+
+        for hh_id in range(self.ts.current("n_households")):
+            hh_fin_inc = household_financial_income[hh_id]
+            if hh_fin_inc <= 0:
+                continue
+            inds_in_hh = np.where(corr_households == hh_id)[0]
+            n_adu = max(n_adults[hh_id], 1)
+            fin_income_per_ind[inds_in_hh] += hh_fin_inc / n_adu
+
+        return fin_income_per_ind
 
     def compute_expected_income_from_financial_assets(self) -> np.ndarray:
         """Calculate expected income from financial assets.
