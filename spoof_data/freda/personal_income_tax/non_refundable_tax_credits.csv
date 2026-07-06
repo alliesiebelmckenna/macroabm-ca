@@ -1,0 +1,8 @@
+tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index
+2014,BC,Personal Amount,9869,,0.0506,,,1
+2014,BC,Age Amount,4426,62450,0.0506,32943,0.15,1
+2014,BC,Spousal Amount,8450,9295,0.0506,845,,1
+2014,BC,Equivalent To Spouse Amount,8450,9295,0.0506,,,1
+2014,BC,CPP Amount,,,0.0506,,,1
+2014,BC,EI Amount,,,0.0506,,,1
+2014,BC,Pension Income Amount,1000,,0.0506,,,0
