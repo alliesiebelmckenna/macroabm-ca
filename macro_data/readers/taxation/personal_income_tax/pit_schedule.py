@@ -1,98 +1,57 @@
 """Progressive Personal Income Tax (PIT) schedule computation.
 
-This module provides three layers:
+This module provides two layers:
 
 1. **Standalone functions** ``compute_progressive_tax`` /
    ``compute_progressive_tax_quick`` — low-level vectorized tax
    computation from arbitrary threshold/rate arrays.
 
-2. **fetch_bc_cpi_inflation()** — retrieves BC all-items CPI inflation
-   from Statistics Canada table 18-10-0005-01, computes year-over-year
-   percentage changes, and caches them as a local CSV.
+2. **PITSchedule class** — reads a local CSV of per-year bracket
+   definitions and returns the published brackets for a requested year
+   (statutory lookup).  It does not project past the published years —
+   a simulation year beyond the last one in the CSV is an error (see
+   ``CentralGovernment.set_pit_for_year``); the CSV itself is expected to
+   carry an explicit row for every year the schedule is known to hold,
+   including years where indexation is legislatively frozen.
 
-3. **PITSchedule class** — reads a local CSV containing bracket
-   definitions for a *base tax year*, plus a separate CPI inflation
-   map (from StatCan or a cached CSV).  When brackets are requested for
-   a year beyond the base, lower bounds are compound-inflated using all
-   intermediate annual CPI rates — only for brackets whose ``indexing``
-   flag is 1.
-
-CSV format (bracket definitions)
---------------------------------
+CSV format (consolidated ``rates_thresholds.csv``)
+--------------------------------------------------
 The CSV must contain the following columns (case-insensitive)::
 
-    tax_year      int     Base taxation year (e.g. 2014).
-    lower_bound   float   Nominal lower income boundary for the base year.
-    marginal_rate float   Tax rate applied to income within this bracket (0–1).
-    indexing      int     Flag: 1 = inflate this boundary in later years;
-                          0 = keep nominal.
+    tax_year  int     Taxation year the row applies to (e.g. 2014).
+    geo       str     Jurisdiction key (e.g. "BC"); rows are filtered to the
+                      requested jurisdiction on read.
+    lower     float   Nominal lower income boundary for that year.
+    rate      float   Marginal tax rate applied within this bracket (0–1).
+    index     int     Flag: 1 = the bound is statutorily indexed; 0 = held
+                      nominal.  Recorded for reference; not used to compute
+                      anything (there is no forward projection).
 
-Brackets are ordered by ``lower_bound`` ascending; the row with the
-smallest ``lower_bound`` (0) is the first bracket.  Each bracket spans
-[lower_bound_k, lower_bound_{k+1}] (or [lower_bound_k, ∞) for the
+On read, the consolidated columns are mapped to the internal field names
+(``lower_bound`` / ``marginal_rate`` / ``indexing``).  Brackets are ordered by
+``lower`` ascending; the row with the smallest ``lower`` (0) is the first
+bracket.  Each bracket spans [lower_k, lower_{k+1}] (or [lower_k, ∞) for the
 highest bracket).  No explicit bracket-ordinal column is required — the
-ordinal is implied by the sorted lower bounds (a new tax-year block
-restarts at ``lower_bound = 0``).
-
-An optional ``inflation`` column may be included to supply the
-annual CPI inflation rate directly in the CSV.  All rows for the same
-``tax_year`` must share the same value.  When this column is present,
-``from_csv`` automatically extracts it and no StatCan fetch is needed.
-When absent, call :meth:`from_csv_with_cpi` to pull inflation from the
-cached ``bc_cpi_inflation.csv`` or StatCan.
+ordinal is implied by the sorted lower bounds (a new tax-year block restarts
+at ``lower = 0``).
 
 Non-refundable tax credits (including the basic personal amount) are
-supplied separately via a companion ``*_tax_credit_amount_*.csv`` file
-(see :class:`TaxCreditSchedule`), not in this bracket CSV.
+supplied separately via the companion ``non_refundable_tax_credits.csv`` (see
+:class:`TaxCreditSchedule`), not in this bracket CSV.
 
 Example::
 
-    tax_year,lower_bound,marginal_rate,indexing
-    2014,0,0.0506,1
-    2014,37606,0.077,1
+    tax_year,geo,lower,rate,index
+    2014,BC,0.0,0.0506,1
+    2014,BC,37606.0,0.077,1
     ...
 
-Or with explicit inflation (no StatCan fetch needed)::
-
-    tax_year,lower_bound,marginal_rate,indexing,inflation
-    2014,0,0.0506,1,0.010
-    2014,37606,0.077,1,0.010
-    ...
-
-CPI inflation map
------------------
-Inflation data is stored separately (not in the bracket CSV).  It is a
-simple CSV with columns ``year`` and ``inflation``, where ``inflation`` is
-the BC all-items CPI year-over-year change as a decimal (e.g. 0.018
-for 1.8 %).  This file lives alongside the bracket CSVs in the taxation
-directory (``raw_data_path / "taxation" / "personal_income_tax" / "bc_cpi_inflation.csv"``, with
-``spoof_data/freda`` as the committed fallback) and can be refreshed at any
-time via ``fetch_bc_cpi_inflation()``.
-
-Compound inflation
-------------------
-When ``get_brackets(tax_year=T)`` is called and *T* is later than the
-CSV's base year, each indexed lower bound is multiplied by::
-
-    ∏_{y = base_year}^{T-1} (1 + inflation_map[y])
-
-Non-indexed boundaries stay at their nominal base-year values.
-
-Quick-add values are recomputed from the inflated bounds so they remain
-self-consistent.
-
-StatCan integration
--------------------
-``fetch_bc_cpi_inflation()`` queries Statistics Canada table
-**18-10-0005-01** (Consumer Price Index, monthly, not seasonally
-adjusted) for:
-
-* **Geography** = British Columbia
-* **Products and product groups** = All-items
-* **Reference period** = 2013-01 onward
-
-It computes the December-over-December (annual average) inflation rate
-for each calendar year and writes the result to the local cache.
+Lookup-only
+-----------
+``get_brackets(tax_year=T)`` returns the actual published rows for *T* —
+bounds and rates — when *T* is one of the schedule's years, and raises
+otherwise.  Quick-add values are recomputed from each year's published
+bounds so they remain self-consistent.
 """
 
 from __future__ import annotations
@@ -108,23 +67,22 @@ from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import 
     TaxCreditSchedule,
 )
 
-# ── required CSV columns for bracket definitions ────────────────────
+# ── required CSV columns (consolidated ``rates_thresholds.csv`` format) ──
 _REQUIRED_COLS = {
-    "tax_year",       # int — base year these brackets apply to
-    "lower_bound",    # float — nominal lower bound (base year)
-    "marginal_rate",  # float — rate for this bracket
-    "indexing",       # bool (0/1) — whether this bound is CPI-indexed
+    "tax_year",  # int — taxation year the row applies to
+    "geo",       # str — jurisdiction key (e.g. "BC"); rows are geo-filtered
+    "lower",     # float — nominal lower income boundary
+    "rate",      # float — marginal rate for this bracket
+    "index",     # bool (0/1) — whether the bound is indexed in projection
 }
 
-# ── CPI cache filename ───────────────────────────────────────────────
-# The cached BC CPI inflation map lives alongside the bracket CSVs inside the
-# taxation directory (``raw_data_path / "taxation" / "personal_income_tax"``); the schedule directory is
-# supplied by the caller rather than resolved relative to this module.
-_CPI_CACHE_FILENAME = "bc_cpi_inflation.csv"
-
-# ── StatCan table details ────────────────────────────────────────────
-_STATCAN_CPI_TABLE = "18-10-0005-01"
-_STATCAN_CPI_START = "2013-01"
+# Boundary mapping from the consolidated CSV columns to the internal field
+# names used throughout the pipeline (applied unconditionally on read).
+_BRACKET_COLUMN_MAP = {
+    "lower": "lower_bound",
+    "rate": "marginal_rate",
+    "index": "indexing",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -203,183 +161,30 @@ def compute_progressive_tax_quick(
 
 
 # =====================================================================
-# 2. StatCan CPI inflation retrieval
-# =====================================================================
-
-def fetch_bc_cpi_inflation(
-    cache_path: Path,
-    force_refresh: bool = False,
-) -> dict[int, float]:
-    """Return BC all-items annual CPI inflation as ``{year: rate}``.
-
-    On first call (or when *force_refresh* is ``True``) the function
-    downloads table **18-10-0005-01** from Statistics Canada, filters
-    for British Columbia / All-items, computes the December-over-
-    December year-over-year change, and caches the result as a CSV.
-
-    Subsequent calls read the cached file unless *force_refresh* is set.
-
-    Args:
-        cache_path: Where to read/write the cached CPI CSV — typically
-            ``raw_data_path / "taxation" / "personal_income_tax" / "bc_cpi_inflation.csv"``.
-        force_refresh: If ``True``, always re-fetch from StatCan.
-
-    Returns:
-        Dict mapping calendar year (int) to BC all-items CPI inflation
-        rate as a decimal (e.g. 0.018 for 1.8 %).
-
-    Raises:
-        ImportError: If ``stats_can`` is not installed.
-        RuntimeError: If the StatCan table cannot be retrieved or
-            filtered.
-    """
-    if not force_refresh and cache_path.exists():
-        df = pd.read_csv(cache_path)
-        return dict(zip(df["year"].astype(int), df["inflation"].astype(float)))
-
-    try:
-        from stats_can.sc import zip_table_to_dataframe
-    except ImportError as exc:
-        raise ImportError(
-            "stats-can is required for live CPI fetching. "
-            "Install it with: pip install stats-can"
-        ) from exc
-
-    import tempfile
-    import zipfile
-
-    # Download the zip to a temp directory so we can read the CSV
-    # with proper encoding (stats-can v3 may mishandle BOM-quoted
-    # column headers, producing NaT for REF_DATE).
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        logger.info("Fetching StatCan table %s ...", _STATCAN_CPI_TABLE)
-        zip_table_to_dataframe(_STATCAN_CPI_TABLE, path=tmp_path)
-
-        # Find the downloaded zip and read the CSV with utf-8-sig
-        zips = list(tmp_path.glob("*.zip"))
-        if not zips:
-            raise RuntimeError(
-                "StatCan download did not produce a zip file in %s" % tmpdir
-            )
-        zip_path = zips[0]
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            csv_names = [n for n in zf.namelist() if n.endswith(".csv") and "MetaData" not in n]
-            if not csv_names:
-                raise RuntimeError("No data CSV found in zip: %s" % zf.namelist())
-            raw = pd.read_csv(zf.open(csv_names[0]), encoding="utf-8-sig")
-
-    # Strip any remaining quotes from column names (StatsCan CSVs
-    # sometimes quote headers like \"REF_DATE\").
-    raw.columns = raw.columns.str.strip('"')
-
-    # We need: GEO = "British Columbia", Products = "All-items".
-    geo_col = _find_column(raw, ["geo", "geography", "geographic", "geog"])
-    product_col = _find_column(raw, [
-        "products and product groups",
-        "products",
-        "product",
-        "product groups",
-        "products_and_product_groups",
-    ])
-    ref_col = _find_column(raw, ["ref_date", "refdate", "reference_period", "reference period"])
-    value_col = _find_column(raw, ["value", "values", "val"])
-
-    geo_mask = raw[geo_col].str.strip().str.lower() == "british columbia"
-    product_mask = raw[product_col].str.strip().str.lower() == "all-items"
-
-    bc_all = raw[geo_mask & product_mask].copy()
-
-    if bc_all.empty:
-        raise RuntimeError(
-            "Could not find BC/All-items rows in table %s. "
-            "Check that the column names match: %s" % (_STATCAN_CPI_TABLE, list(raw.columns))
-        )
-
-    bc_all[value_col] = pd.to_numeric(bc_all[value_col], errors="coerce")
-    bc_all = bc_all.dropna(subset=[value_col])
-
-    # --- Parse REF_DATE into year & optional month -----------------
-    # StatsCan CSVs may have REF_DATE as:
-    #   * plain years  (e.g. 1979)        → int / float columns
-    #   * YYYY-MM      (e.g. "2023-01")   → object columns
-    #   * YYYY-MM-DD   (e.g. "2023-01-01")
-    ref_series = bc_all[ref_col]
-    if pd.api.types.is_numeric_dtype(ref_series):
-        # Already years — use directly.
-        bc_all["year"] = ref_series.astype(int)
-        # Annual data: one row per year → no month filtering needed.
-        annual = bc_all.sort_values("year")
-    else:
-        ref_dt = pd.to_datetime(ref_series, errors="coerce")
-        bc_all["year"] = ref_dt.dt.year
-        # Try December-first; fall back to annual mean.
-        dec_rows = bc_all[ref_dt.dt.month == 12]
-        if len(dec_rows) > 0:
-            annual = dec_rows.sort_values("year")
-        else:
-            annual = bc_all.groupby("year")[value_col].mean().reset_index()
-
-    # Compute year-over-year inflation as pct_change of the CPI level.
-    annual = annual.set_index("year")
-    annual["inflation"] = annual[value_col].pct_change()
-
-    result = annual["inflation"].dropna().to_dict()
-    result = {int(k): float(v) for k, v in result.items()}
-
-    # Cache
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        {"year": sorted(result), "inflation": [result[y] for y in sorted(result)]}
-    ).to_csv(cache_path, index=False)
-    logger.info("CPI inflation cached to %s", cache_path)
-
-    return result
-
-
-def _find_column(df: pd.DataFrame, candidates: list[str]) -> str:
-    """Find the first column name in *candidates* that exists (case-insensitive)."""
-    lower_cols = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        if cand.lower() in lower_cols:
-            return lower_cols[cand.lower()]
-    raise KeyError(
-        f"None of {candidates} found in DataFrame columns: {list(df.columns)}"
-    )
-
-
-# =====================================================================
-# 3. PITSchedule — CSV + CPI-backed multi-year schedule
+# 2. PITSchedule — CSV-backed multi-year schedule (statutory lookup)
 # =====================================================================
 
 class PITSchedule:
-    """Progressive PIT schedule backed by a base-year CSV + CPI inflation map.
+    """Progressive PIT schedule backed by a per-year bracket CSV.
 
     Typical usage::
 
-        # Load brackets + fetch live CPI from StatCan
-        schedule = PITSchedule.from_csv_with_cpi("bc_pit_2014.csv")
+        schedule = PITSchedule.from_csv("rates_thresholds.csv")
 
-        # Or load brackets with a pre-computed CPI dict
-        cpi = {2014: 0.01, 2015: 0.011, 2016: 0.018}
-        schedule = PITSchedule.from_csv("bc_pit_2014.csv", cpi_map=cpi)
-
-        # Get brackets for 2016 — compound-inflated from 2014
-        thresholds, rates = schedule.get_brackets(tax_year=2016)
-
-        # Get nominal base-year brackets (no inflation)
-        thresholds, rates = schedule.get_brackets(tax_year=2014)
+        # Get the published brackets for a listed year (statutory lookup)
+        thresholds, rates, *_ = schedule.get_brackets(tax_year=2016)
     """
 
     def __init__(
         self,
         df: pd.DataFrame,
-        cpi_map: Optional[dict[int, float]] = None,
         tax_credits: Optional["TaxCreditSchedule"] = None,
     ) -> None:
         self._df = df.copy()
-        self._base_year: int = int(self._df["tax_year"].iloc[0])
-        self._cpi_map: dict[int, float] = dict(cpi_map) if cpi_map else {}
+        # Minimum year, not the first row's — a valid but unsorted CSV must
+        # not silently shift the base year (it feeds the "before base year"
+        # validation in get_brackets).
+        self._base_year: int = int(self._df["tax_year"].min())
         self._tax_credits: Optional["TaxCreditSchedule"] = tax_credits
 
     # ── factories ───────────────────────────────────────────────────
@@ -388,15 +193,13 @@ class PITSchedule:
     def from_csv(
         cls,
         path: str | Path,
-        cpi_map: Optional[dict[int, float]] = None,
+        jurisdiction: str = "bc",
     ) -> "PITSchedule":
         """Load bracket definitions from a CSV file.
 
         Args:
             path: Path to the CSV file.
-            cpi_map: Optional ``{year: inflation_rate}`` dict.  When
-                provided, ``get_brackets`` can compound-inflate bounds
-                for years beyond the base year.
+            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
 
         Returns:
             A configured ``PITSchedule`` instance.
@@ -409,48 +212,44 @@ class PITSchedule:
         missing = _REQUIRED_COLS - set(df.columns)
         if missing:
             raise ValueError(
-                f"CSV is missing required columns: {sorted(missing)}. "
+                f"CSV is missing required columns: {sorted(missing)} "
+                f"(consolidated rates_thresholds format). "
                 f"Found columns: {sorted(df.columns)}"
             )
+
+        geo = jurisdiction.upper()
+        df = df[df["geo"].astype(str).str.upper() == geo].copy()
+        if df.empty:
+            raise ValueError(
+                f"CSV {path} does not contain any rows for geo {geo}"
+            )
+
+        # Boundary mapping: consolidated column names -> internal field names.
+        df = df.rename(columns=_BRACKET_COLUMN_MAP)
+
+        df = df.dropna(subset=["tax_year", "lower_bound", "marginal_rate", "indexing"])
 
         df["tax_year"] = df["tax_year"].astype(int)
         for col in ("lower_bound", "marginal_rate"):
             df[col] = df[col].astype(float)
         df["indexing"] = df["indexing"].astype(bool)
 
-        # Optional inflation column: extract per-year CPI rates.
-        inflation_col = None
-        for c in df.columns:
-            if c.lower() == "inflation":
-                inflation_col = c
-                break
-
-        if inflation_col is not None and cpi_map is None:
-            df[inflation_col] = df[inflation_col].astype(float)
-            infl = df[["tax_year", inflation_col]].drop_duplicates()
-            if infl["tax_year"].duplicated().any():
-                raise ValueError(
-                    "Inconsistent inflation values: multiple rows for the "
-                    "same tax_year have different inflation values."
-                )
-            cpi_map = dict(zip(infl["tax_year"].astype(int), infl[inflation_col]))
-
-        return cls(df, cpi_map=cpi_map)
+        return cls(df)
 
     @classmethod
     def from_name(
         cls,
         filename: str,
         schedule_dir: Path,
-        cpi_map: Optional[dict[int, float]] = None,
+        jurisdiction: str = "bc",
     ) -> "PITSchedule":
         """Load a schedule by filename from *schedule_dir*.
 
         Args:
-            filename: Bracket CSV filename (e.g. ``"bc_pit_2014.csv"``).
+            filename: Bracket CSV filename (``"rates_thresholds.csv"``).
             schedule_dir: Directory holding the schedule CSVs — typically
                 ``raw_data_path / "taxation" / "personal_income_tax"``.
-            cpi_map: Optional ``{year: inflation_rate}`` for CPI indexing.
+            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
         """
         schedule_dir = Path(schedule_dir)
         path = schedule_dir / filename
@@ -459,110 +258,30 @@ class PITSchedule:
                 f"Schedule file not found: {path}\n"
                 f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
-        schedule = cls.from_csv(path, cpi_map=cpi_map)
-        schedule._load_companion_tax_credits(path)
+        schedule = cls.from_csv(path, jurisdiction=jurisdiction)
+        schedule._load_companion_tax_credits(path, jurisdiction=jurisdiction)
         return schedule
-
-    @classmethod
-    def from_name_with_cpi(
-        cls,
-        filename: str,
-        schedule_dir: Path,
-        force_refresh: bool = False,
-    ) -> "PITSchedule":
-        """Load a schedule by filename from *schedule_dir* with CPI.
-
-        Resolution order:
-        1. If the CSV has an ``inflation`` column → use it (no fetch).
-        2. Else if ``bc_cpi_inflation.csv`` exists in *schedule_dir* → load
-           from cache.
-        3. Else → fetch live from StatCan table 18-10-0005-01.
-
-        Args:
-            filename: Bracket CSV filename (e.g. ``"bc_pit_2014.csv"``).
-            schedule_dir: Directory holding the schedule CSVs (and the CPI
-                cache) — typically ``raw_data_path / "taxation" / "personal_income_tax"``.
-            force_refresh: If ``True``, re-download CPI from StatCan
-                (ignored when the CSV has an ``inflation`` column).
-
-        Returns:
-            A ``PITSchedule`` with CPI inflation data.
-        """
-        schedule_dir = Path(schedule_dir)
-        path = schedule_dir / filename
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Schedule file not found: {path}\n"
-                f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
-            )
-        schedule = cls.from_csv_with_cpi(path, force_refresh=force_refresh)
-        schedule._load_companion_tax_credits(path)
-        return schedule
-
-    @classmethod
-    def from_csv_with_cpi(
-        cls,
-        path: str | Path,
-        force_refresh: bool = False,
-    ) -> "PITSchedule":
-        """Load brackets from CSV with CPI inflation from cache or StatCan.
-
-        Resolution order:
-        1. If the CSV has an ``inflation`` column → use it (no fetch).
-        2. Else if ``bc_cpi_inflation.csv`` exists → load from cache.
-        3. Else → fetch live from StatCan table 18-10-0005-01.
-
-        Pass *force_refresh=True* to skip the cache and always fetch
-        from StatCan (unless the CSV itself carries an ``inflation``
-        column, which always takes precedence).
-
-        Args:
-            path: Path to the bracket CSV.
-            force_refresh: If ``True``, re-download CPI from StatCan
-                (ignored when the CSV has an ``inflation`` column).
-
-        Returns:
-            A ``PITSchedule`` with CPI inflation data.
-        """
-        p = Path(path)
-
-        # Peek at the CSV header to see if inflation is baked in.
-        header = pd.read_csv(p, nrows=0)
-        has_inflation = any(c.lower() == "inflation" for c in header.columns)
-
-        if has_inflation:
-            logger.info("CSV has an inflation column — using embedded values.")
-            return cls.from_csv(p)
-
-        cpi = fetch_bc_cpi_inflation(
-            cache_path=p.parent / _CPI_CACHE_FILENAME, force_refresh=force_refresh
-        )
-        return cls.from_csv(p, cpi_map=cpi)
 
     # ── companion tax-credit file auto-discovery ────────────────────
 
-    def _load_companion_tax_credits(self, bracket_path: Path) -> None:
-        """Try to load a companion ``*_tax_credit_*.csv`` alongside the bracket CSV.
+    def _load_companion_tax_credits(
+        self,
+        bracket_path: Path,
+        jurisdiction: str = "bc",
+    ) -> None:
+        """Load the companion ``non_refundable_tax_credits.csv`` when present.
 
-        Convention: ``bc_pit_2014.csv`` → looks for ``bc_tax_credit_amount_2014.csv``
-        in the same directory.  The credit file is optional — when not found
-        the model applies no tax credits (none configured).
+        The credit file is optional — when not found the model applies no tax
+        credits (none configured).
         """
-        stem = bracket_path.stem          # e.g. "bc_pit_2014"
-        parent_dir = bracket_path.parent
-
-        # Derive companion name: replace "pit" with "tax_credit_amount"
-        candidate_stem = stem.replace("pit", "tax_credit_amount")
-        candidate = parent_dir / f"{candidate_stem}.csv"
-
+        candidate = bracket_path.parent / "non_refundable_tax_credits.csv"
         if not candidate.exists():
-            # Also try without the suffix pattern
             logger.debug("No companion tax-credit file found (%s)", candidate)
             return
 
         logger.info("Loading companion tax-credit file: %s", candidate.name)
         self._tax_credits = TaxCreditSchedule.from_csv(
-            candidate, cpi_map=dict(self._cpi_map)
+            candidate, jurisdiction=jurisdiction
         )
 
     # ── properties ──────────────────────────────────────────────────
@@ -576,11 +295,6 @@ class PITSchedule:
     def available_years(self) -> np.ndarray:
         """Sorted unique tax years present in the schedule."""
         return np.sort(self._df["tax_year"].unique())
-
-    @property
-    def cpi_map(self) -> dict[int, float]:
-        """Annual BC CPI inflation rates ``{year: rate}``."""
-        return dict(self._cpi_map)
 
     @property
     def tax_credits(self) -> Optional["TaxCreditSchedule"]:
@@ -598,12 +312,13 @@ class PITSchedule:
         self,
         tax_year: int,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Return bracket arrays for *tax_year*, with compound CPI indexing.
+        """Return the published bracket arrays for *tax_year* (statutory lookup).
 
-        When *tax_year* is later than :attr:`base_year`, each indexed
-        lower bound is multiplied by the product of
-        ``(1 + inflation_y)`` for every intermediate year.  Non-indexed bounds stay at their
-        nominal base-year values.  ``quick_add`` values are recomputed.
+        Lookup-only: a year present in the schedule returns its OWN published
+        rows — actual bounds and rates — and ``quick_add`` values are recomputed
+        from them.  A year not in the schedule raises; there is no forward
+        projection — the CSV must carry an explicit row for every year the
+        schedule is known to hold (including legislatively frozen years).
 
         Args:
             tax_year: The tax year to retrieve.
@@ -612,35 +327,39 @@ class PITSchedule:
             Tuple ``(thresholds, rates, lower_bounds, quick_adds)``.
 
         Raises:
-            ValueError: If *tax_year* is before the base year or CPI
-                data for an intermediate year is missing.
+            ValueError: If *tax_year* is before the base year, or is not one of
+                the published years.
         """
         # Bracket order is implied by ascending lower_bound (the former
         # explicit ``step`` column); the first bracket starts at 0.
-        base_df = self._df.sort_values("lower_bound")
+        years_present = {int(y) for y in self._df["tax_year"].unique()}
 
-        lower_bounds = base_df["lower_bound"].values.copy()
-        marginal_rates = base_df["marginal_rate"].values.copy()
-        indexing_flags = base_df["indexing"].values
-
-        # Compound inflation from base_year through tax_year-1.
-        if tax_year > self.base_year and indexing_flags.any():
-            factor = 1.0
-            for y in range(self.base_year, tax_year):
-                rate = self._cpi_map.get(y)
-                if rate is None:
-                    raise ValueError(
-                        f"Missing CPI inflation for year {y} "
-                        f"(needed to inflate {self.base_year} → {tax_year}). "
-                        f"Available years: {sorted(self._cpi_map)}"
-                    )
-                factor *= 1.0 + rate
-
-            scale = np.where(indexing_flags, factor, 1.0)
-            lower_bounds = lower_bounds * scale
+        if tax_year in years_present:
+            # ── Statutory lookup ──────────────────────────────────────────
+            # A year present in the table returns its OWN published rows —
+            # actual bounds AND rates — so per-year rate changes, freezes, and
+            # re-basings come through exactly, with no compounding/double-count.
+            # (Filter to this year's rows only; never sort across all years.)
+            year_df = self._df[self._df["tax_year"] == tax_year].sort_values(
+                "lower_bound"
+            )
+            lower_bounds = year_df["lower_bound"].values.astype(float).copy()
+            marginal_rates = year_df["marginal_rate"].values.astype(float).copy()
         elif tax_year < self.base_year:
             raise ValueError(
                 f"tax_year {tax_year} is before base year {self.base_year}"
+            )
+        else:
+            # ── Out of table (year not published) ──────────────────────────
+            # The reader is lookup-only: it returns a year's actual published
+            # rows or nothing.  There is no forward projection — a schedule
+            # meant to cover a later year (including a legislated freeze) must
+            # carry an explicit row for it.
+            raise ValueError(
+                f"tax_year {tax_year} is not in the published schedule "
+                f"(available years: {sorted(years_present)}). The reader is "
+                f"lookup-only and does not project past the published years; "
+                f"add an explicit row for {tax_year} to the schedule CSV."
             )
 
         quick_adds = _recompute_quick_add(lower_bounds, marginal_rates)

@@ -7,8 +7,9 @@
 #
 # SCOPE — scalars only.
 #   Progressive bracket schedules and tax-credit amount schedules are NOT kept
-#   here.  Those are published, multi-row, CPI-indexed tables and live in their
-#   own CSV files in the taxation directory (raw_data_path/"taxation", with
+#   here.  Those are published, multi-row, per-year tables (statutory lookup,
+#   no forward projection) and live in their own CSV files in the taxation
+#   directory (raw_data_path/"taxation", with
 #   spoof_data/freda as the committed fallback; read by PITSchedule /
 #   TaxCreditSchedule).  Putting them here as well would create two competing
 #   sources of truth for the same numbers.

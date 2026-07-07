@@ -106,6 +106,7 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Flat per-individual deduction from taxable income before brackets.",
     )
 
+
     # Fraction of a couple household's rental income assigned to the
     # higher-earning adult when distributing household-level rental
     # income to individuals for progressive PIT.  The lower earner

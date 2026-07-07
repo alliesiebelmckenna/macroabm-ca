@@ -10,6 +10,7 @@ exists but lacks its schedules is surfaced via ``TaxationDataWarning``.
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from macro_data.readers.default_readers import DataPaths, _load_taxation_reader
@@ -49,12 +50,19 @@ class TestTaxationReader:
         assert reader.pit_schedule.tax_credits is not None
         assert reader.dividend_schedule is not None
 
+    def test_from_dir_prefers_consolidated_geo_format(self):
+        reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+        _, rates, lower_bounds, _ = reader.pit_schedule.get_brackets(2015)
+        assert np.allclose(lower_bounds, [0, 37869, 75740, 86958, 105592, 151050])
+        assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
+        credits = reader.pit_schedule.tax_credits.get_credits(2014)
+        assert any(c.kind == "Personal Amount" and c.amount == pytest.approx(9869) for c in credits)
+
     def test_dividend_schedule_optional(self, tmp_path):
-        # Copy the bracket + companion-credit + CPI files, omit the dividend CSV.
+        # Copy the two consolidated files, omit the dividend CSV.
         for name in (
-            "bc_pit_2014.csv",
-            "bc_tax_credit_amount_2014.csv",
-            "bc_cpi_inflation.csv",
+            "rates_thresholds.csv",
+            "non_refundable_tax_credits.csv",
         ):
             shutil.copy(_COMMITTED_PIT_DIR / name, tmp_path)
         reader = TaxationReader.from_dir(tmp_path)
@@ -119,3 +127,28 @@ class TestDataPathsTaxationWiring:
         # (progressive PIT stays inactive), matching flat-rate parity.
         datapaths = DataPaths.default_paths(tmp_path, icio_years=[])
         assert _load_taxation_reader(datapaths.taxation_path) is None
+
+
+_ON_RATES_THRESHOLDS = """tax_year,geo,lower,rate,index
+2014,ON,0.0,0.0505,1
+2014,ON,43906.0,0.0915,1
+2014,BC,0.0,0.0506,1
+2014,BC,37606.0,0.077,1
+"""
+
+
+class TestGeoFilteredBrackets:
+    """Bracket rows are geo-filtered — another jurisdiction's rows in the same
+    consolidated CSV must never be read silently."""
+
+    def test_brackets_filtered_by_jurisdiction(self, tmp_path):
+        (tmp_path / "rates_thresholds.csv").write_text(_ON_RATES_THRESHOLDS)
+
+        reader = TaxationReader.from_dir(tmp_path, jurisdiction="on")
+        assert reader.jurisdiction == "on"
+        # ON's two brackets only, never a mix with the BC rows in the same file.
+        _, rates, lower_bounds, _ = reader.pit_schedule.get_brackets(2014)
+        assert np.allclose(lower_bounds, [0.0, 43906.0])
+        assert np.allclose(rates, [0.0505, 0.0915])
+
+

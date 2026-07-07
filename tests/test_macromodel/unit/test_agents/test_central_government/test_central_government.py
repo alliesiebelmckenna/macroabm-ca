@@ -157,71 +157,6 @@ class TestCentralGovernmentPIT:
         # Low earner effective rate should be < highest bracket rate
         assert low_effective[0] < rates[-1]
 
-    # ── step_pit_brackets: CPI inflation of thresholds ────────────
-
-    def test_step_pit_brackets_inflates_thresholds(
-        self, test_central_government_pit,
-    ):
-        """step_pit_brackets compound-inflates pit_thresholds from
-        stored base values."""
-        cg = test_central_government_pit
-
-        assert cg.pit_base_thresholds is not None, "PIT base thresholds should be stored"
-        original = cg.states["pit_thresholds"].copy()
-
-        # Inflate from base_year=2014 to tax_year=2017 with known CPI
-        cpi_map = {2014: 0.01, 2015: 0.02, 2016: 0.015}
-        cg.step_pit_brackets(tax_year=2017, cpi_map=cpi_map, base_year=2014)
-
-        factor = 1.01 * 1.02 * 1.015  # ≈ 1.045653
-        inflated = cg.states["pit_thresholds"]
-
-        # All thresholds (except inf) should be scaled
-        for i in range(len(inflated) - 1):  # last is inf
-            expected = original[i] * factor
-            assert inflated[i] == pytest.approx(expected), (
-                f"threshold[{i}]: {inflated[i]} != {expected}"
-            )
-        # Last threshold remains inf
-        assert np.isinf(inflated[-1])
-
-    def test_step_pit_brackets_noop_at_base_year(
-        self, test_central_government_pit,
-    ):
-        """Call with tax_year <= base_year is a no-op."""
-        cg = test_central_government_pit
-        original = cg.states["pit_thresholds"].copy()
-
-        cpi_map = {2014: 0.01, 2015: 0.02}
-        cg.step_pit_brackets(tax_year=2014, cpi_map=cpi_map, base_year=2014)
-
-        np.testing.assert_array_equal(cg.states["pit_thresholds"], original)
-
-    def test_step_pit_brackets_noop_without_pit(self, test_central_government):
-        """Flat-tax government: step_pit_brackets is a no-op."""
-        cg = test_central_government
-        # Should not raise
-        cg.step_pit_brackets(
-            tax_year=2017,
-            cpi_map={2014: 0.01, 2015: 0.02},
-            base_year=2014,
-        )
-
-    def test_step_pit_brackets_idempotent(
-        self, test_central_government_pit,
-    ):
-        """Repeated calls with the same arguments give the same result."""
-        cg = test_central_government_pit
-        cpi_map = {2014: 0.01, 2015: 0.02, 2016: 0.03}
-
-        cg.step_pit_brackets(tax_year=2017, cpi_map=cpi_map, base_year=2014)
-        first = cg.states["pit_thresholds"].copy()
-
-        cg.step_pit_brackets(tax_year=2017, cpi_map=cpi_map, base_year=2014)
-        second = cg.states["pit_thresholds"].copy()
-
-        np.testing.assert_array_equal(second, first)
-
     # ── pit_tax_credits (multi-component) ───────
 
     def test_pit_tax_credits_stored(self, test_central_government_pit_full):
@@ -482,56 +417,6 @@ class TestCentralGovernmentPIT:
         ).sum()
         assert tax == pytest.approx(expected)
 
-    # ── step_pit_brackets: deductions are CPI-inflated too ────────
-
-    def test_step_pit_brackets_inflates_tax_credits(
-        self, test_central_government_pit_full,
-    ):
-        """CPI inflation inflates indexed pit_tax_credits amounts."""
-        cg = test_central_government_pit_full
-        assert cg.pit_base_tax_credits is not None
-
-        orig = cg.states["pit_tax_credits"][0]["amount"]
-        cpi_map = {2014: 0.10}
-
-        cg.step_pit_brackets(tax_year=2015, cpi_map=cpi_map, base_year=2014)
-
-        expected = orig * 1.10
-        assert cg.states["pit_tax_credits"][0]["amount"] == pytest.approx(expected)
-
-    def test_step_pit_brackets_inflates_taxable_income_deductions(
-        self, test_central_government_pit_full,
-    ):
-        """CPI inflation also inflates pit_taxable_income_deductions
-        (seeded manually since the fixture uses credits-only)."""
-        cg = test_central_government_pit_full
-
-        cg.states["pit_taxable_income_deductions"] = 1000.0
-        cg.pit_base_deductions = 1000.0
-
-        cpi_map = {2014: 0.10}
-
-        cg.step_pit_brackets(tax_year=2015, cpi_map=cpi_map, base_year=2014)
-
-        expected = 1000.0 * 1.10
-        assert cg.states["pit_taxable_income_deductions"] == pytest.approx(expected)
-
-    def test_step_pit_brackets_empty_cpi_noop(
-        self, test_central_government_pit_full,
-    ):
-        """Empty cpi_map: thresholds, credits, and deductions unchanged."""
-        cg = test_central_government_pit_full
-        orig_thresh = cg.states["pit_thresholds"].copy()
-        orig_credits = [dict(tc) for tc in cg.states["pit_tax_credits"]]
-        orig_deduc = cg.states.get("pit_taxable_income_deductions")
-
-        cg.step_pit_brackets(tax_year=2017, cpi_map={}, base_year=2014)
-
-        np.testing.assert_array_equal(cg.states["pit_thresholds"], orig_thresh)
-        assert cg.states["pit_tax_credits"] == orig_credits
-        if orig_deduc is not None:
-            assert cg.states["pit_taxable_income_deductions"] == orig_deduc
-
     # ── Pre-calibration: effective rate from employee income ─────
 
     def test_pre_calibration_effective_rate_in_country_construction(
@@ -591,3 +476,133 @@ class TestCentralGovernmentPIT:
             f"Effective rate with credits ({rate:.4f}) should be < 10%"
         )
         assert rate > 0.0
+
+
+class TestSetPitForYear:
+    """``set_pit_for_year`` performs a statutory lookup against the per-year
+    schedule table — swapping in each year's actual published brackets, rates,
+    credits, and deductions.  It carries a marginal *rate* change (which a pure
+    indexation of the base year cannot); a year before the table's first entry
+    holds the first schedule; a gap year within the table's range holds the
+    most recent published year; and a year beyond the table's last entry
+    raises — there is no forward projection, so the caller must stop rather
+    than silently run on an unfunded schedule.
+    """
+
+    @staticmethod
+    def _credit(amount):
+        return {
+            "kind": "Personal Amount",
+            "amount": amount,
+            "indexing": True,
+            "age_min": None,
+            "clawback_start": None,
+            "clawback_cap": None,
+        }
+
+    def _seed_table(self, cg):
+        """Install a two-year table on the agent: 2014 and 2016 (a 2015 gap).
+
+        2016 changes the *bottom marginal rate* (0.05 → 0.056), the threshold,
+        the credit amount, and the deduction — so a correct lookup must replace
+        all four, not just inflate thresholds.
+        """
+        table = {
+            2014: {
+                "pit_thresholds": np.array([100.0, 200.0, np.inf]),
+                "pit_rates": np.array([0.05, 0.10, 0.15]),
+                "pit_tax_credits": [self._credit(1000.0)],
+                "pit_taxable_income_deductions": 50.0,
+            },
+            2016: {
+                "pit_thresholds": np.array([110.0, 210.0, np.inf]),
+                "pit_rates": np.array([0.056, 0.10, 0.15]),
+                "pit_tax_credits": [self._credit(1100.0)],
+                "pit_taxable_income_deductions": 55.0,
+            },
+        }
+        cg.states["pit_schedule_by_year"] = table
+        return table
+
+    def test_selects_exact_year(self, test_central_government_pit_full):
+        cg = test_central_government_pit_full
+        self._seed_table(cg)
+
+        cg.set_pit_for_year(2014)
+
+        np.testing.assert_array_equal(
+            cg.states["pit_thresholds"], np.array([100.0, 200.0, np.inf])
+        )
+        assert cg.states["pit_rates"][0] == 0.05
+        assert cg.states["pit_tax_credits"][0]["amount"] == 1000.0
+        assert cg.states["pit_taxable_income_deductions"] == 50.0
+
+    def test_carries_marginal_rate_change(self, test_central_government_pit_full):
+        """A statutory rate change (not expressible by CPI compounding) is
+        carried by the lookup."""
+        cg = test_central_government_pit_full
+        self._seed_table(cg)
+
+        cg.set_pit_for_year(2016)
+
+        assert cg.states["pit_rates"][0] == pytest.approx(0.056)
+        np.testing.assert_array_equal(
+            cg.states["pit_thresholds"], np.array([110.0, 210.0, np.inf])
+        )
+        assert cg.states["pit_tax_credits"][0]["amount"] == 1100.0
+        assert cg.states["pit_taxable_income_deductions"] == 55.0
+
+    def test_gap_year_holds_most_recent(self, test_central_government_pit_full):
+        """A year between table entries (2015) holds the most recent year at or
+        before it (2014), not the next one."""
+        cg = test_central_government_pit_full
+        self._seed_table(cg)
+
+        cg.set_pit_for_year(2015)
+
+        assert cg.states["pit_rates"][0] == 0.05
+        np.testing.assert_array_equal(
+            cg.states["pit_thresholds"], np.array([100.0, 200.0, np.inf])
+        )
+
+    def test_beyond_table_raises(self, test_central_government_pit_full):
+        """A year past the table's last entry raises rather than holding the
+        last known schedule flat — the model does not project past the
+        published data."""
+        cg = test_central_government_pit_full
+        self._seed_table(cg)
+        before = cg.states["pit_thresholds"].copy()
+
+        with pytest.raises(ValueError, match="exceeds the last available"):
+            cg.set_pit_for_year(2050)
+
+        # The agent's live state is untouched by the rejected lookup.
+        np.testing.assert_array_equal(cg.states["pit_thresholds"], before)
+
+    def test_before_table_holds_first_year(self, test_central_government_pit_full):
+        """A year before the table's first entry holds the first schedule."""
+        cg = test_central_government_pit_full
+        self._seed_table(cg)
+
+        cg.set_pit_for_year(2000)
+
+        assert cg.states["pit_rates"][0] == 0.05
+        np.testing.assert_array_equal(
+            cg.states["pit_thresholds"], np.array([100.0, 200.0, np.inf])
+        )
+
+    def test_noop_without_table(self, test_central_government_pit):
+        """No schedule table (single-year / frozen) ⇒ schedule untouched."""
+        cg = test_central_government_pit
+        assert "pit_schedule_by_year" not in cg.states
+        original = cg.states["pit_thresholds"].copy()
+
+        cg.set_pit_for_year(2025)
+
+        np.testing.assert_array_equal(cg.states["pit_thresholds"], original)
+
+    def test_noop_on_flat_government(self, test_central_government):
+        """Flat-tax government: set_pit_for_year is a no-op (no PIT states)."""
+        cg = test_central_government
+        cg.set_pit_for_year(2025)
+        assert "pit_thresholds" not in cg.states

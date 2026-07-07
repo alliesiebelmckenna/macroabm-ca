@@ -171,3 +171,6 @@ raw_data/
 
 # Personal memory sync artifact (secret-gist snapshot, local only)
 memory.md
+
+# Local scratch / discovery notes (never commit)
+temp/

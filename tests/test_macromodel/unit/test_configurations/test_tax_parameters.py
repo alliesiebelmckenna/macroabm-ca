@@ -102,8 +102,8 @@ class TestApplyTaxParameters:
         assert applied.pit_brackets == [(50000.0, 0.1), (math.inf, 0.2)]
 
     def test_parity_with_defaults(self):
-        """The packaged values mirror the config defaults, so applying them to a
-        fresh config must be a no-op (behaviour stays at parity until opted in)."""
+        """The packaged scalars mirror the config defaults exactly, so applying
+        them is a true no-op."""
         base = CentralGovernmentConfiguration()
         applied = apply_tax_parameters(base, "bc", 2014)
         assert applied.model_dump() == base.model_dump()
@@ -255,17 +255,92 @@ class TestBuildCentralGovernmentConfiguration:
         _build("bc", 2014)
         assert default.pit_brackets is None
 
-    def test_later_year_builds_with_scalar_fallback(self):
-        """A later year the YAML lacks still builds: brackets CPI-index, the
-        dividend rates come from the year-ranged CSV (distinct 2019 values),
-        and the scalar assumptions fall back to the latest prior year (2014)."""
-        config = _build("bc", 2019)
-        # 2019 dividend rates differ from 2014 (the CSV is year-ranged).
-        assert config.dividend_eligible_dtc_rate == pytest.approx(0.12)
-        assert config.dividend_non_eligible_gross_up == pytest.approx(0.15)
-        # Scalar assumptions fall back to the 2014 block.
-        assert config.dividend_small_business_share == 0.90
-        assert config.couple_rental_income_split == 0.5
+    def test_dividend_schedule_is_year_ranged(self):
+        """The dividend schedule returns a later year's OWN rates, distinct from
+        2014's (0.10 DTC / 0.18 non-eligible gross-up).  Queried directly: the
+        dividend schedule is year-ranged data, so 2019 is a real lookup, not a
+        projection."""
+        rates = _committed_reader().dividend_schedule.get_year_rates(tax_year=2019)
+        assert rates["eligible"].dtc_rate_of_grossed_up == pytest.approx(0.12)
+        assert rates["non_eligible"].gross_up_rate == pytest.approx(0.15)
+
+    def test_build_out_of_table_bracket_year_raises(self):
+        """The builder is lookup-only on brackets: a year the bracket schedule
+        does not publish raises rather than projecting — there is no forward
+        projection anywhere in the pipeline, and in production the builder is
+        only ever called with published years.  The consolidated fixture
+        publishes 2014-2030, so 2099 is out of table."""
+        with pytest.raises(ValueError, match="not in the published schedule"):
+            _build("bc", 2099)
+
+
+class TestDeferredCreditSafety:
+    """Credits the runtime cannot yet express must be DEFERRED — skipped by the
+    builder — never applied universally.  Covers both explicitly-registered
+    deferred kinds and unknown kinds (the unmapped fallback).  Without this, the
+    expanded historical CSV would grant e.g. the Disability Amount to every
+    individual at full value."""
+
+    @staticmethod
+    def _load_one(kind: str, tmp_path: Path, amount: str = "1000"):
+        from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import (
+            TaxCreditSchedule,
+        )
+        csv = tmp_path / "tc.csv"
+        csv.write_text(
+            "tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index\n"
+            f"2014,BC,{kind},{amount},,0.0506,,,1\n"
+        )
+        return TaxCreditSchedule.from_csv(csv).credits[0]
+
+    def test_unknown_kind_is_deferred_not_universal(self, tmp_path):
+        """An unmapped credit kind must NOT get the empty (universal) eligibility
+        dict; it gets a non-expressible deferred marker instead."""
+        c = self._load_one("Totally Made Up Credit", tmp_path)
+        assert c.eligibility != {}  # the old behaviour — would be universal
+        assert c.eligibility == {"_deferred_unmapped": True}
+
+    def test_unknown_kind_dropped_by_builder(self, tmp_path):
+        from macromodel.configurations.tax_parameters.central_government_builder import (
+            _credit_component_to_def,
+        )
+        c = self._load_one("Totally Made Up Credit", tmp_path)
+        assert _credit_component_to_def(c) is None  # not carried to the runtime
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "B.C. Caregiver Amount",
+            "Disability Amount",
+            "Disability Amount (Child)",
+            "Adoption Amount",
+            "Volunteer Firefighter Amount",
+            "Medical Expense Amount",
+            "BC Tax Reduction Credit",
+        ],
+    )
+    def test_registered_deferred_credit_dropped_by_builder(self, kind, tmp_path):
+        """Every currently-live credit the model cannot yet compute is registered
+        deferred and skipped by the builder, so loading the full historical CSV
+        never grants them universally."""
+        from macromodel.configurations.tax_parameters.central_government_builder import (
+            _credit_component_to_def,
+        )
+        assert _credit_component_to_def(self._load_one(kind, tmp_path)) is None
+
+    def test_active_credits_still_carried(self, tmp_path):
+        """The four implemented credits are NOT swept up by the deferral — each
+        still maps to a runtime def."""
+        from macromodel.configurations.tax_parameters.central_government_builder import (
+            _credit_component_to_def,
+        )
+        for kind in (
+            "Personal Amount",
+            "Age Amount",
+            "Spousal Amount",
+            "Equivalent To Spouse Amount",
+        ):
+            assert _credit_component_to_def(self._load_one(kind, tmp_path)) is not None
 
 
 class TestNoTaxationData:
