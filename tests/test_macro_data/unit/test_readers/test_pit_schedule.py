@@ -63,9 +63,9 @@ def bc_2014_quick_adds(bc_2014_lower_bounds, bc_2014_rates) -> np.ndarray:
 def sample_csv_path() -> Path:
     """Write a minimal 2-bracket PIT CSV to a temp file."""
     csv_content = (
-        "tax_year,lower_bound,marginal_rate,indexing\n"
-        "2020,0,0.10,1\n"
-        "2020,50000,0.25,1\n"
+        "tax_year,geo,lower,rate,index\n"
+        "2020,BC,0,0.10,1\n"
+        "2020,BC,50000,0.25,1\n"
     )
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".csv", delete=False
@@ -305,8 +305,8 @@ class TestPITSchedule:
     """Integration tests for the PITSchedule class."""
 
     def test_from_name_loads_bc_2014(self):
-        """Built-in bc_pit_2014.csv loads with 6 brackets."""
-        schedule = PITSchedule.from_name("bc_pit_2014.csv", schedule_dir=BC_SCHEDULE_DIR)
+        """The consolidated file loads BC 2014 with 6 brackets."""
+        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
         assert schedule.base_year == 2014
         thresholds, rates, lower_bounds, quick_adds = schedule.get_brackets(
             tax_year=2014
@@ -324,101 +324,50 @@ class TestPITSchedule:
             rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168]
         )
 
-    def test_from_name_with_cpi_map(self):
-        """Explicit CPI map overrides any cached/default."""
+    def test_from_name_loads_consolidated_geo_format(self):
+        """The contributor's geo-keyed consolidated file loads for BC too."""
         schedule = PITSchedule.from_name(
-            "bc_pit_2014.csv",
+            "rates_thresholds.csv",
             schedule_dir=BC_SCHEDULE_DIR,
-            cpi_map={2014: 0.10, 2015: 0.20},
+            jurisdiction="bc",
         )
-        assert schedule.cpi_map[2014] == 0.10
-        assert schedule.cpi_map[2015] == 0.20
+        assert schedule.base_year == 2014
+        thresholds, rates, lower_bounds, _ = schedule.get_brackets(tax_year=2015)
+        assert len(thresholds) == 6
+        assert np.allclose(lower_bounds, [0, 37869, 75740, 86958, 105592, 151050])
+        assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
 
     def test_get_brackets_base_year_no_inflation(self):
         """Base-year brackets equal nominal CSV values."""
-        schedule = PITSchedule.from_name("bc_pit_2014.csv", schedule_dir=BC_SCHEDULE_DIR)
+        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
         _, _, lower_bounds, _ = schedule.get_brackets(tax_year=2014)
-        # Known nominal lower bounds from bc_pit_2014.csv
+        # Known nominal BC 2014 lower bounds from the consolidated file
         expected = [0, 37606, 75213, 86354, 104858, 150000]
         assert np.allclose(lower_bounds, expected)
 
     def test_get_brackets_before_base_year_raises(self):
         """Requesting a year before the base year raises."""
-        schedule = PITSchedule.from_name("bc_pit_2014.csv", schedule_dir=BC_SCHEDULE_DIR)
+        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
         with pytest.raises(
             ValueError, match="before base year"
         ):
             schedule.get_brackets(tax_year=2013)
 
-    def test_cpi_indexing_inflates_indexed_bounds(self):
-        """CPI-inflated year: indexed bounds compound, non-indexed stay."""
+    def test_get_brackets_out_of_table_raises(self):
+        """A year past the published schedule raises (the reader is lookup-only;
+        there is no forward projection anywhere in the pipeline)."""
         schedule = PITSchedule.from_name(
-            "bc_pit_2014.csv",
+            "rates_thresholds.csv",
             schedule_dir=BC_SCHEDULE_DIR,
-            cpi_map={2014: 0.01, 2015: 0.02, 2016: 0.03},
         )
-        _, _, lbs_base, _ = schedule.get_brackets(tax_year=2014)
-        _, _, lbs_2017, _ = schedule.get_brackets(tax_year=2017)
-
-        # All BC brackets are indexed, so:
-        # factor = (1.01) * (1.02) * (1.03) ≈ 1.061106
-        factor = 1.01 * 1.02 * 1.03
-
-        # First bracket lower_bound=0 stays 0
-        assert lbs_2017[0] == 0.0
-        # Second bracket: 37606 × factor
-        assert lbs_2017[1] == pytest.approx(lbs_base[1] * factor)
-        # All indexed bounds should be scaled
-        for i in range(1, len(lbs_base)):
-            assert lbs_2017[i] == pytest.approx(lbs_base[i] * factor)
-
-    def test_missing_cpi_year_raises(self):
-        """CPI gap between base_year and requested year raises."""
-        schedule = PITSchedule.from_name(
-            "bc_pit_2014.csv",
-            schedule_dir=BC_SCHEDULE_DIR,
-            cpi_map={2014: 0.01},  # only 2014, not 2015
-        )
-        with pytest.raises(
-            ValueError, match="Missing CPI inflation"
-        ):
-            schedule.get_brackets(tax_year=2016)
-
-    def test_cpi_indexing_respects_indexing_flag(self):
-        """Only brackets with indexing=1 are inflated."""
-        # Write a temp CSV with mixed indexing flags
-        csv = (
-            "tax_year,lower_bound,marginal_rate,indexing\n"
-            "2020,0,0.10,1\n"          # indexed
-            "2020,50000,0.20,0\n"       # NOT indexed
-            "2020,100000,0.30,1\n"      # indexed
-        )
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as f:
-            f.write(csv)
-            p = f.name
-
-        try:
-            schedule = PITSchedule.from_csv(
-                p, cpi_map={2020: 0.10, 2021: 0.10}
-            )
-            _, _, lbs_base, _ = schedule.get_brackets(tax_year=2020)
-            _, _, lbs_2022, _ = schedule.get_brackets(tax_year=2022)
-            factor = 1.10 * 1.10  # 1.21
-
-            # Bracket 0 (indexed, lower_bound=0): stays 0
-            assert lbs_2022[0] == 0.0
-            # Bracket 1 (NOT indexed): stays nominal
-            assert lbs_2022[1] == pytest.approx(lbs_base[1])
-            # Bracket 2 (indexed): inflated
-            assert lbs_2022[2] == pytest.approx(lbs_base[2] * factor)
-        finally:
-            Path(p).unlink(missing_ok=True)
+        # The consolidated fixture publishes 2014-2030, so a far-future year is
+        # out of table and raises.
+        with pytest.raises(ValueError, match="not in the published schedule"):
+            schedule.get_brackets(tax_year=2099)
 
     def test_from_csv_missing_columns_raises(self):
         """CSV missing required columns raises ValueError."""
-        csv = "tax_year,lower_bound\n2020,0\n"
+        csv = "tax_year,lower\n2020,0\n"
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False
         ) as f:
@@ -440,7 +389,7 @@ class TestPITSchedule:
 
     def test_compute_tax_convenience(self):
         """PITSchedule.compute_tax wrapper matches manual call."""
-        schedule = PITSchedule.from_name("bc_pit_2014.csv", schedule_dir=BC_SCHEDULE_DIR)
+        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
         incomes = np.array([30000.0, 80000.0, 200000.0])
 
         via_method = schedule.compute_tax(incomes, tax_year=2014)
@@ -451,45 +400,62 @@ class TestPITSchedule:
 
     def test_available_years(self):
         """available_years returns sorted unique years from CSV."""
-        schedule = PITSchedule.from_name("bc_pit_2014.csv", schedule_dir=BC_SCHEDULE_DIR)
+        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
         years = schedule.available_years
         assert len(years) > 0
         assert years[0] == 2014
         assert np.all(np.diff(years) >= 0)  # sorted
 
-    def test_from_csv_with_embedded_inflation(self):
-        """CSV with embedded `inflation` column auto-extracts cpi_map."""
-        csv = (
-            "tax_year,lower_bound,marginal_rate,indexing,inflation\n"
-            "2022,0,0.05,1,0.030\n"
-            "2022,40000,0.15,1,0.030\n"
-        )
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as f:
-            f.write(csv)
-            p = f.name
 
-        try:
-            schedule = PITSchedule.from_csv(p)
-            assert schedule.cpi_map[2022] == pytest.approx(0.030)
-        finally:
-            Path(p).unlink(missing_ok=True)
+# ═══════════════════════════════════════════════════════════════════════
+# 6. PITSchedule — statutory lookup over a MULTI-YEAR schedule
+# ═══════════════════════════════════════════════════════════════════════
 
-    def test_get_brackets_returns_compound_thresholds(self):
-        """Compound-inflated thresholds are computed from inflated bounds."""
-        schedule = PITSchedule.from_name(
-            "bc_pit_2014.csv",
-            schedule_dir=BC_SCHEDULE_DIR,
-            cpi_map={2014: 0.01, 2015: 0.01},
+
+class TestStatutoryLookup:
+    """A multi-year schedule must return the ACTUAL published rows for a year
+    present in the table (statutory lookup) — NOT values compounded from the
+    base year. A year NOT in the table is out of range and raises (the reader is
+    lookup-only)."""
+
+    @staticmethod
+    def _multiyear_csv(tmp_path) -> Path:
+        # Distinct per-year values so lookup is distinguishable from compounding.
+        # 2015 changes a threshold (40000->41000); 2016 ALSO changes the bottom
+        # rate (0.05->0.06) and top rate (0.10->0.11) — and compounding NEVER
+        # changes rates, so a correct rate can only come from lookup.
+        p = tmp_path / "multi.csv"
+        p.write_text(
+            "tax_year,geo,lower,rate,index\n"
+            "2014,BC,0,0.05,1\n"
+            "2014,BC,40000,0.10,1\n"
+            "2015,BC,0,0.05,1\n"
+            "2015,BC,41000,0.10,1\n"
+            "2016,BC,0,0.06,1\n"
+            "2016,BC,42000,0.11,1\n"
         )
-        thresholds, rates, lower_bounds, quick_adds = schedule.get_brackets(
-            tax_year=2016
-        )
-        # thresholds = lower_bounds[1:] + [inf]
-        assert np.isinf(thresholds[-1])
-        for i in range(len(thresholds) - 1):
-            assert thresholds[i] == pytest.approx(lower_bounds[i + 1])
-        # Quick-adds should be consistent with recomputed values
-        expected_quick = _recompute_quick_add(lower_bounds, rates)
-        assert np.allclose(quick_adds, expected_quick)
+        return p
+
+    def test_present_year_returns_actual_rows(self, tmp_path):
+        """get_brackets for a listed year returns that year's own bounds/rates."""
+        sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path))
+        _, rates, lower_bounds, _ = sched.get_brackets(tax_year=2015)
+        assert np.allclose(lower_bounds, [0.0, 41000.0])
+        assert np.allclose(rates, [0.05, 0.10])
+
+    def test_lookup_captures_statutory_rate_change(self, tmp_path):
+        """2016's bottom/top rates (0.06/0.11) differ from 2014's (0.05/0.10);
+        compounding can't produce them — only a per-year lookup can."""
+        sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path))
+        _, rates, lower_bounds, _ = sched.get_brackets(tax_year=2016)
+        assert np.allclose(lower_bounds, [0.0, 42000.0])
+        assert np.allclose(rates, [0.06, 0.11])
+
+    def test_base_year_lookup_not_polluted_by_later_years(self, tmp_path):
+        """Base-year lookup returns ONLY the base year's two brackets, not a
+        mix of all years' rows (the bug in the all-rows sort)."""
+        sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path))
+        _, rates, lower_bounds, _ = sched.get_brackets(tax_year=2014)
+        assert len(lower_bounds) == 2
+        assert np.allclose(lower_bounds, [0.0, 40000.0])
+        assert np.allclose(rates, [0.05, 0.10])

@@ -109,7 +109,7 @@ def read_tax_parameters(
         # modelling assumptions (small-business share, rental split, the
         # integration switch), not inflation-indexed figures, so carrying them
         # forward is sound.  (Schedules -- brackets, credit amounts, dividend
-        # rates -- are already year-aware via CPI-indexing / year ranges, so
+        # rates -- are already year-aware via their own per-year CSV rows, so
         # only these scalars need a fallback.)  A year preceding every available
         # block stays an error.
         prior_years = [y for y in by_year if y <= year]

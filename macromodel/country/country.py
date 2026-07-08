@@ -42,7 +42,10 @@ from macro_data import SyntheticCountry
 from macromodel.agents.agent import Agent
 from macromodel.agents.banks.banks import Banks
 from macromodel.agents.central_bank.central_bank import CentralBank
-from macromodel.agents.central_government.central_government import CentralGovernment
+from macromodel.agents.central_government.central_government import (
+    CentralGovernment,
+    pit_credit_defs_to_state_dicts,
+)
 from macromodel.agents.central_government.pit_pools import (
     PitContext,
     build_credit_base_pool,
@@ -63,6 +66,85 @@ from macromodel.markets.housing_market.housing_market import HousingMarket
 from macromodel.markets.labour_market.labour_market import LabourMarket
 from macromodel.rest_of_the_world import RestOfTheWorld
 from macromodel.util.get_histogram import get_histogram
+
+
+def _build_pit_schedule_by_year(
+    base_config,
+    taxation_reader,
+    scale: int,
+) -> Optional[dict[int, dict]]:
+    """Resolve the progressive PIT schedule for every year the data covers.
+
+    Returns a ``{tax_year: state_fragment}`` table where each fragment holds the
+    ``pit_thresholds`` / ``pit_rates`` / ``pit_tax_credits`` /
+    ``pit_taxable_income_deductions`` for that statutory year — pre-scaled to
+    agent units exactly as the single construction-year schedule is (see the
+    bracket-scaling block in ``from_pickled_country``).  The
+    :meth:`CentralGovernment.set_pit_for_year` lookup later swaps the matching
+    fragment into the agent's ``states`` as the simulation's calendar year
+    advances.
+
+    Building every year here (rather than CPI-compounding at run time) means the
+    table carries the *actual published* values per year — including marginal
+    rate changes, new brackets, and credit reforms that a CPI inflation of the
+    base year cannot express.  The table only ever holds published years — there
+    is no forward projection past the last one; a simulation year beyond the
+    table is the caller's error to raise (see
+    ``CentralGovernment.set_pit_for_year``).
+
+    Returns ``None`` (no table, indexing stays off) when progressive PIT is not
+    opted in or no taxation data is present.
+
+    Args:
+        base_config: The government's base configuration (carries the
+            ``activate_progressive_pit`` opt-in and non-tax fields).
+        taxation_reader: The jurisdiction's loaded schedules, or ``None``.
+        scale: Population scaling factor; thresholds are multiplied by it to move
+            from per-individual to agent-level income units.
+
+    Returns:
+        The per-year schedule table, or ``None`` when indexing is inactive.
+    """
+    if taxation_reader is None or not base_config.activate_progressive_pit:
+        return None
+
+    years = [int(y) for y in taxation_reader.pit_schedule.available_years]
+    if not years:
+        return None
+
+    table: dict[int, dict] = {}
+    for year in years:
+        config_year = activate_taxation(
+            base_config=base_config,
+            taxation_reader=taxation_reader,
+            tax_year=year,
+        )
+        if config_year.pit_brackets is None:
+            continue
+
+        brackets = config_year.pit_brackets
+        if scale > 1:
+            brackets = [(threshold * scale, rate) for threshold, rate in brackets]
+        brackets_array = np.array(brackets, dtype=float)
+
+        fragment: dict = {
+            "pit_thresholds": brackets_array[:, 0],
+            "pit_rates": brackets_array[:, 1],
+        }
+        if config_year.pit_taxable_income_deductions is not None:
+            fragment["pit_taxable_income_deductions"] = (
+                config_year.pit_taxable_income_deductions
+            )
+        if config_year.pit_tax_credits is not None:
+            fragment["pit_tax_credits"] = pit_credit_defs_to_state_dicts(
+                config_year.pit_tax_credits
+            )
+        table[year] = fragment
+
+    if not table:
+        return None
+
+    return table
 
 
 class Country:
@@ -361,6 +443,22 @@ class Country:
             tax_data=synthetic_country.tax_data,
             n_industries=n_industries,
         )
+
+        # --- Progressive PIT: per-year statutory schedule table ---
+        # Resolve each available year's brackets/credits (with the SAME agent
+        # scaling applied above) and stash the table on the agent.  The
+        # pit_indexing pre-hook reads it via set_pit_for_year to advance the
+        # schedule across the simulation's calendar years.  Keyed off the data
+        # the reader carries (no base-year literal); a single-year schedule or
+        # absent/flat config yields no table, so the schedule holds flat —
+        # matching the no-indexing parity path.
+        pit_schedule_by_year = _build_pit_schedule_by_year(
+            base_config=country_configuration.central_government,
+            taxation_reader=synthetic_country.taxation,
+            scale=scale,
+        )
+        if pit_schedule_by_year:
+            central_government.states["pit_schedule_by_year"] = pit_schedule_by_year
 
         # --- Progressive PIT: pre-calibrate the effective rate ---
         # When a progressive schedule is configured, compute the

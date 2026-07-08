@@ -36,6 +36,35 @@ from macromodel.util.function_mapping import functions_from_model, update_functi
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
 
 
+def pit_credit_defs_to_state_dicts(pit_tax_credits) -> list[dict]:
+    """Convert configuration ``TaxCreditDef`` objects to the runtime credit dicts.
+
+    The runtime credit pool (``pit_pools._credit_amount``) and the CPI stepper
+    consume tax credits as plain dicts keyed by ``kind``/``amount``/``indexing``/
+    ``age_min`` (plus optional clawback bounds).  Both ``from_pickled_agent`` (the
+    construction-time conversion) and the per-year schedule table built in
+    ``country.py`` must produce the *identical* dict shape, so the mapping lives
+    here in one place.
+
+    Args:
+        pit_tax_credits: Iterable of ``TaxCreditDef`` from the configuration.
+
+    Returns:
+        One dict per credit, in input order.
+    """
+    return [
+        {
+            "kind": t.kind,
+            "amount": t.amount,
+            "indexing": t.indexing,
+            "age_min": t.eligibility_age_min,
+            "clawback_start": t.clawback_start,
+            "clawback_cap": t.clawback_cap,
+        }
+        for t in pit_tax_credits
+    ]
+
+
 class CentralGovernment(Agent):
     """Central Government agent responsible for fiscal policy and social benefits.
 
@@ -87,20 +116,6 @@ class CentralGovernment(Agent):
             states,
         )
         self.functions = functions
-
-        # Snapshot base thresholds for CPI inflation indexing.
-        # When step_pit_brackets() is called mid-simulation, the stored
-        # nominal values are compound-inflated and written back to states.
-        if "pit_thresholds" in states:
-            self.pit_base_thresholds = states["pit_thresholds"].copy()
-        else:
-            self.pit_base_thresholds = None
-
-        # Snapshot base taxable-income deduction for CPI inflation indexing.
-        self.pit_base_deductions: Optional[float] = states.get("pit_taxable_income_deductions")
-
-        # Snapshot base tax credits (list of dicts) for CPI indexing.
-        self.pit_base_tax_credits: Optional[list[dict]] = states.get("pit_tax_credits")
 
     @classmethod
     def from_pickled_agent(
@@ -159,17 +174,9 @@ class CentralGovernment(Agent):
             if configuration.pit_taxable_income_deductions is not None:
                 states["pit_taxable_income_deductions"] = configuration.pit_taxable_income_deductions
             if configuration.pit_tax_credits is not None:
-                states["pit_tax_credits"] = [
-                    {
-                        "kind": t.kind,
-                        "amount": t.amount,
-                        "indexing": t.indexing,
-                        "age_min": t.eligibility_age_min,
-                        "clawback_start": t.clawback_start,
-                        "clawback_cap": t.clawback_cap,
-                    }
-                    for t in configuration.pit_tax_credits
-                ]
+                states["pit_tax_credits"] = pit_credit_defs_to_state_dicts(
+                    configuration.pit_tax_credits
+                )
 
         # Couple rental income split for progressive PIT
         states["couple_rental_income_split"] = configuration.couple_rental_income_split
@@ -560,65 +567,78 @@ class CentralGovernment(Agent):
             + self.ts.current("taxes_exports")[0]
         )
 
-    def step_pit_brackets(
-        self,
-        tax_year: int,
-        cpi_map: dict[int, float],
-        base_year: int,
-    ) -> None:
-        """Inflate PIT thresholds, tax credits, and taxable-income
-        deductions with compound CPI.
+    def set_pit_for_year(self, tax_year: int) -> None:
+        """Swap in the PIT schedule (brackets, rates, credits, deductions) for *tax_year*.
 
-        Recomputes ``states["pit_thresholds"]``,
-        ``states["pit_tax_credits"]``, and
-        ``states["pit_taxable_income_deductions"]`` by compounding annual
-        CPI inflation rates.  The nominal values stored at construction
-        are never modified — inflation is always computed from those
-        original values, making repeated calls safe.
+        Statutory lookup: it selects the *already-resolved* schedule for
+        ``tax_year`` from ``states["pit_schedule_by_year"]`` — the per-year table
+        assembled in ``country.py`` from the historical schedule, with thresholds
+        already scaled to agent units.  The ``pit_indexing`` pre-hook calls this
+        once per timestep so the brackets advance as the simulation's calendar
+        year progresses.
 
-        Call this once per simulated year (every 4 quarterly timesteps)
-        to mirror real-world bracket indexation.
+        Each year's rows are the actual published values, so the lookup carries
+        policy changes a pure indexation cannot — a marginal *rate* change (e.g.
+        BC's 2026 bottom-rate increase), a new bracket, or a credit reform.
+
+        There is no forward projection: the table only ever holds the years the
+        taxation CSV publishes explicitly (including any legislatively frozen
+        years, which must be given their own row).  A ``tax_year`` that falls
+        strictly between two published years (a gap the CSV skipped) holds at
+        the most recent year at or before it.  A ``tax_year`` before the first
+        published year uses the first year's schedule.  A ``tax_year`` *beyond*
+        the last published year raises — the simulation cannot silently run on
+        an unfunded schedule, so it must stop with a clear error instead.
+
+        No-op when ``states["pit_schedule_by_year"]`` is absent — i.e. flat-tax
+        governments and progressive governments built from a single-year
+        schedule, which therefore stay frozen at their construction year.
 
         Args:
-            tax_year: Current tax year.
-            cpi_map: ``{year: inflation_rate}`` mapping (0.018 = 1.8 %).
-            base_year: Year whose thresholds are the nominal base.
+            tax_year: The simulation's current calendar year.
+
+        Raises:
+            ValueError: If ``tax_year`` exceeds the last year published in the
+                taxation schedule.
         """
-        if self.pit_base_thresholds is None:
+        table = self.states.get("pit_schedule_by_year")
+        if not table:
             return
-        if tax_year <= base_year or not cpi_map:
-            return
 
-        factor = 1.0
-        for y in range(base_year, tax_year):
-            rate = cpi_map.get(y)
-            if rate is not None:
-                factor *= 1.0 + rate
+        years = sorted(table)
+        if tax_year in table:
+            selected = tax_year
+        elif tax_year < years[0]:
+            selected = years[0]
+        elif tax_year > years[-1]:
+            raise ValueError(
+                f"Simulation year {tax_year} exceeds the last available PIT "
+                f"schedule year {years[-1]}. The schedule is a statutory "
+                f"lookup with no forward projection; extend the taxation "
+                f"schedule CSVs to cover {tax_year} before running a "
+                f"simulation this far."
+            )
+        else:
+            # A gap year within the published range (skipped in the CSV) —
+            # hold at the most recent published year at or before tax_year.
+            selected = max(y for y in years if y <= tax_year)
 
-        self.states["pit_thresholds"] = self.pit_base_thresholds * factor
-
-        if self.pit_base_deductions is not None:
-            self.states["pit_taxable_income_deductions"] = self.pit_base_deductions * factor
-
-        # CPI-inflate tax credit components (only those with indexing=True).
-        if self.pit_base_tax_credits is not None:
-            inflated = []
-            for tc in self.pit_base_tax_credits:
-                entry = {
-                    "kind": tc["kind"],
-                    "amount": tc["amount"] * factor if tc.get("indexing", True) else tc["amount"],
-                    "indexing": tc.get("indexing", True),
-                    "age_min": tc.get("age_min"),
-                }
-                # Only include clawback keys if they were in the base dict
-                if "clawback_start" in tc:
-                    tc_cs = tc["clawback_start"]
-                    entry["clawback_start"] = tc_cs * factor if (tc.get("indexing", True) and tc_cs is not None) else tc_cs
-                if "clawback_cap" in tc:
-                    tc_cc = tc["clawback_cap"]
-                    entry["clawback_cap"] = tc_cc * factor if (tc.get("indexing", True) and tc_cc is not None) else tc_cc
-                inflated.append(entry)
-            self.states["pit_tax_credits"] = inflated
+        fragment = table[selected]
+        self.states["pit_thresholds"] = fragment["pit_thresholds"]
+        self.states["pit_rates"] = fragment["pit_rates"]
+        # Clear-on-absence: the state must match the selected fragment exactly.
+        # An optional field omitted from the fragment means "not active this
+        # year", so drop any stale value rather than carrying the prior year's.
+        if "pit_taxable_income_deductions" in fragment:
+            self.states["pit_taxable_income_deductions"] = fragment[
+                "pit_taxable_income_deductions"
+            ]
+        else:
+            self.states.pop("pit_taxable_income_deductions", None)
+        if "pit_tax_credits" in fragment:
+            self.states["pit_tax_credits"] = fragment["pit_tax_credits"]
+        else:
+            self.states.pop("pit_tax_credits", None)
 
     def compute_revenue(
         self,
