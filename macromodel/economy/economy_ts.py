@@ -300,26 +300,21 @@ def create_economy_timeseries(
         ts["imports_from_" + c] = initial_imports_by_country[c]
 
     # GDP sanity check
-    # Provincial reader data may have larger calibration gaps than
-    # country-level data; use a wider tolerance to avoid blocking
-    # provincial simulations.
-    _GDP_TOLERANCE = 0.40
 
     current_output = ts.current("gdp_output")[0]
     current_expenditure = ts.current("gdp_expenditure")[0]
     current_income = ts.current("gdp_income")[0]
 
-    if not np.isclose(current_output, current_expenditure, rtol=_GDP_TOLERANCE):
-        raise AssertionError(
-            f"GDP output/expenditure mismatch > {_GDP_TOLERANCE:.0%}: "
-            f"output={current_output:.0f} exp={current_expenditure:.0f} "
-            f"ratio={current_output / current_expenditure:.4f}"
-        )
-    if not np.isclose(current_output, current_income, rtol=_GDP_TOLERANCE):
-        raise AssertionError(
-            f"GDP output/income mismatch > {_GDP_TOLERANCE:.0%}: "
-            f"output={current_output:.0f} inc={current_income:.0f} "
-            f"ratio={current_output / current_income:.4f}"
-        )
+    assert np.isclose(current_output, current_expenditure), (
+        f"mismatch, output/expenditure GDP: {current_output / current_expenditure}"
+    )
+    # TEMPORARY: the income leg misses by up to ~9e-5 in some real disaggregated
+    # provincial builds (NB/PE/QC) — a not-yet-characterized, income-side,
+    # non-size-correlated discrepancy. rtol=5e-4 admits it (~5x margin over the
+    # worst case) while still rejecting any >0.05% error; the expenditure leg
+    # stays exact. Revert to the exact default once the root cause is fixed.
+    assert np.isclose(current_output, current_income, rtol=5e-4), (
+        f"mismatch, output/income GDP: {current_output / current_income}"
+    )
 
     return ts
