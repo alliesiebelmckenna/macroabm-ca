@@ -56,7 +56,7 @@ class TestTaxationReader:
         assert np.allclose(lower_bounds, [0, 37869, 75740, 86958, 105592, 151050])
         assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
         credits = reader.pit_schedule.tax_credits.get_credits(2014)
-        assert any(c.kind == "Personal Amount" and c.amount == pytest.approx(9869) for c in credits)
+        assert any(c.credit == "Personal Amount" and c.amount == pytest.approx(9869) for c in credits)
 
     def test_dividend_schedule_optional(self, tmp_path):
         # Copy the two consolidated files, omit the dividend CSV.

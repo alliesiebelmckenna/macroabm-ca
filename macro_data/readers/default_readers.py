@@ -92,9 +92,8 @@ class DataPaths:
         compustat_banks_path (Path): Path to Compustat banks data
         emissions_path (Path): Path to emissions data
         taxation_path (Optional[Path]): Path to the taxation schedule directory
-            (PIT brackets, tax-credit amounts, dividend gross-up / DTC rates, CPI
-            cache).  Optional and additive; consumed by the central-government
-            builder, not by ``from_raw_data``.
+            (PIT brackets, tax-credit amounts, dividend gross-up / DTC rates).
+            Optional and additive.
     """
 
     goods_criticality_path: Path
@@ -119,13 +118,8 @@ class DataPaths:
     emissions_fraction_path: Optional[Path] = None
     firm_prices_path: Optional[Path] = None
     ch4_emissions_path: Optional[Path] = None
-    # Taxation schedule directory (PIT brackets, credit amounts, dividend rates,
-    # CPI cache).  Optional and additive, mirroring the energy-sector readers:
-    # absent ⇒ no ``TaxationReader`` is built and progressive PIT stays inactive
-    # (flat-rate parity); it is *not* backfilled from committed schedules.
-    # Consumed by ``from_raw_data`` via ``_load_taxation_reader`` to populate
-    # ``DataReaders.taxation``; the central-government builder then takes that
-    # loaded reader rather than resolving paths itself.
+    # Taxation schedule directory (optional); when absent, progressive PIT stays
+    # inactive. Loaded by from_raw_data via _load_taxation_reader.
     taxation_path: Optional[Path] = None
 
     @classmethod
@@ -780,40 +774,21 @@ class DataReaders:
         return weights_by_income
 
 
-# Per-tax-type subdirectory holding the personal-income-tax schedules, relative
-# to the taxation root.  Mirrors the reader package layout
-# (macro_data/readers/taxation/personal_income_tax/).
+# Subdirectory holding the personal-income-tax schedules, relative to the
+# taxation root; mirrors the reader package layout.
 _PIT_SUBDIR = "personal_income_tax"
 
 
 def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationReader]:
     """Build the taxation reader from the taxation root, or ``None`` when absent.
 
-    Additive and optional, like the energy-sector readers: a run without a
-    ``taxation/`` tree simply does not get taxation (progressive PIT is not
-    activated downstream), and that common case is silent.  Partial data is a
-    misconfiguration and is handled uniformly — whether the
-    ``personal_income_tax/`` subdirectory is missing or the subdirectory exists
-    but the bracket schedule CSV does not, a :class:`TaxationDataWarning` is
-    emitted and ``None`` is returned, so the run falls back to the flat-tax
-    setup instead of aborting.
-
-    Jurisdiction is BC-only at this seam: the reader is built with
-    ``TaxationReader.from_dir``'s default (``jurisdiction="bc"``), matching the
-    current BC-provincial dataset.  Downstream consumption is already
-    jurisdiction-keyed (``activate_taxation`` reads ``taxation_reader.jurisdiction``),
-    so supporting additional taxing authorities means threading a jurisdiction
-    selector into this loader, not changing the consumers.
-
-    Args:
-        taxation_path: The ``raw_data_path / "taxation"`` root (or ``None``).
-
-    Returns:
-        A ``TaxationReader`` when the schedules are present, else ``None``.
+    Optional, like the energy-sector readers: a missing ``taxation/`` tree is
+    silent, while partial data (missing subdirectory or schedule CSV) emits a
+    ``TaxationDataWarning`` and returns ``None`` so the run falls back to flat
+    tax. Jurisdiction is BC-only at this seam.
     """
     if taxation_path is None or not taxation_path.exists():
-        # Taxation simply not in use — silent, matching the energy-sector
-        # "path is None / absent ⇒ skip" convention.
+        # Taxation simply not in use; silent, per the energy-sector convention.
         return None
 
     pit_dir = taxation_path / _PIT_SUBDIR
@@ -831,9 +806,8 @@ def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationRea
     try:
         return TaxationReader.from_dir(pit_dir)
     except FileNotFoundError as error:
-        # Same misconfiguration one level down: the subdirectory exists but a
-        # required schedule file does not.  Warn and fall back to the flat-tax
-        # setup, identically to the missing-subdirectory case above.
+        # Subdirectory exists but a required schedule file does not; warn and
+        # fall back to the flat-tax setup as above.
         warnings.warn(
             f"A taxation schedule directory exists at {pit_dir} but a required "
             f"schedule file is missing; taxation is disabled (progressive PIT "

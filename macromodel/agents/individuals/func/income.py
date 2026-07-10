@@ -105,10 +105,9 @@ class IncomeSetter(ABC):
             dividend_payout_ratio (float): Share of profits paid as dividends
             income_taxes (float): Personal income tax rate
             tau_firm (float): Corporate tax rate
-            dividend_income_taxes: Override income-tax rate for investor dividends.
-                Pass 0.0 when PIT dividend integration is active to suppress the
-                at-source flat haircut (replaced by the progressive PIT schedule).
-                Defaults to ``income_taxes`` when None.
+            dividend_income_taxes: Override income-tax rate for investor
+                dividends; pass 0.0 to suppress the at-source haircut when PIT
+                dividend integration is active. Defaults to ``income_taxes``.
 
         Returns:
             np.ndarray: Current income by individual
@@ -172,10 +171,9 @@ class DefaultIncomeSetter(IncomeSetter):
             dividend_payout_ratio (float): Share of profits paid as dividends
             income_taxes (float): Personal income tax rate
             tau_firm (float): Corporate tax rate
-            dividend_income_taxes: Override income-tax rate for investor dividends.
-                Pass 0.0 when PIT dividend integration is active to suppress the
-                at-source flat haircut (replaced by the progressive PIT schedule).
-                Defaults to ``income_taxes`` when None.
+            dividend_income_taxes: Override income-tax rate for investor
+                dividends; pass 0.0 to suppress the at-source haircut when PIT
+                dividend integration is active. Defaults to ``income_taxes``.
 
         Returns:
             np.ndarray: Expected income by individual
@@ -252,10 +250,9 @@ class DefaultIncomeSetter(IncomeSetter):
             dividend_payout_ratio (float): Share of profits paid as dividends
             income_taxes (float): Personal income tax rate
             tau_firm (float): Corporate tax rate
-            dividend_income_taxes: Override income-tax rate for investor dividends.
-                Pass 0.0 when PIT dividend integration is active to suppress the
-                at-source flat haircut (replaced by the progressive PIT schedule).
-                Defaults to ``income_taxes`` when None.
+            dividend_income_taxes: Override income-tax rate for investor
+                dividends; pass 0.0 to suppress the at-source haircut when PIT
+                dividend integration is active. Defaults to ``income_taxes``.
 
         Returns:
             np.ndarray: Current income by individual

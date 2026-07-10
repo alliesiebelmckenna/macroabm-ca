@@ -30,9 +30,7 @@ BC_SCHEDULE_DIR = (
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # Fixtures
-# ═══════════════════════════════════════════════════════════════════════
 
 
 @pytest.fixture(scope="module")
@@ -74,9 +72,7 @@ def sample_csv_path() -> Path:
         return Path(f.name)
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 1. compute_progressive_tax — pure-function tests
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestComputeProgressiveTax:
@@ -158,9 +154,7 @@ class TestComputeProgressiveTax:
         assert np.all(np.diff(tax[np.argsort(incomes)]) >= -1e-10)
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 2. compute_progressive_tax_quick — fast-path tests
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestComputeProgressiveTaxQuick:
@@ -220,9 +214,7 @@ class TestComputeProgressiveTaxQuick:
             )
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 3. _validate_brackets — input validation
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestValidateBrackets:
@@ -263,9 +255,7 @@ class TestValidateBrackets:
             )
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 4. _recompute_quick_add — helper
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestRecomputeQuickAdd:
@@ -296,9 +286,7 @@ class TestRecomputeQuickAdd:
         assert np.allclose(quick, [0.0, 10.0, 30.0])
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 5. PITSchedule — class-level tests
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestPITSchedule:
@@ -407,9 +395,7 @@ class TestPITSchedule:
         assert np.all(np.diff(years) >= 0)  # sorted
 
 
-# ═══════════════════════════════════════════════════════════════════════
 # 6. PITSchedule — statutory lookup over a MULTI-YEAR schedule
-# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestStatutoryLookup:

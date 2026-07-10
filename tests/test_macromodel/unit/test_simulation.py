@@ -806,11 +806,11 @@ def test_heterogeneous_investment_effectiveness(datawrapper):
         assert total_invested >= 0
 
 
-def test_pit_indexing_autoregistered_and_advances(datawrapper, tmp_path):
+def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
     """Full-Simulation integration of PIT bracket indexing.
 
     A country carrying *multi-year* taxation data with progressive PIT opted in
-    makes ``Simulation.from_datawrapper`` auto-register the ``pit_indexing``
+    makes ``Simulation.from_datawrapper`` auto-register the ``pit_schedule_update``
     pre-hook, and the real ``run_prehooks`` loop advances the agent's brackets
     (including a published bottom-rate change) with the calendar year.
     """
@@ -869,7 +869,7 @@ def test_pit_indexing_autoregistered_and_advances(datawrapper, tmp_path):
     assert cg.states["pit_rates"][0] == pytest.approx(0.0600)
 
 
-def test_no_pit_indexing_hook_without_taxation(datawrapper):
+def test_no_pit_schedule_update_hook_without_taxation(datawrapper):
     """A plain (no-taxation) country registers no indexing pre-hook — flat
     parity, no auto-registration."""
     configuration = SimulationConfiguration(

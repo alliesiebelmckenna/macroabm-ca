@@ -1,62 +1,18 @@
-"""Tax credit schedule — per-individual non-refundable tax credit definitions.
+"""Module for producing a non-refundable tax credit schedule.
 
-This module provides the ``TaxCreditSchedule`` class, which reads a CSV
-containing per-credit-kind definitions (base amounts, eligibility rules,
-indexing flags) and supplies per-individual credit eligibility at
-computation time.
+This module reads per-credit definitions (base amounts, eligibility rules,
+index flags) from a consolidated ``non_refundable_tax_credits.csv`` keyed by
+tax year and jurisdiction, and supplies the published credit components for a
+requested year. The ``TaxCreditSchedule`` class is the companion to
+``PITSchedule``: an individual's eligible credit bases are summed and valued at
+the bottom marginal rate, then subtracted from gross tax.
 
-CSV format (consolidated ``non_refundable_tax_credits.csv``)
-------------------------------------------------------------
-::
-
-    tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index
-    2014,BC,Personal Amount,9869.0,,0.0506,,,1
-    2014,BC,Age Amount,4426.0,62450.0,0.0506,32943.0,0.15,1
-    ...
-
-Columns (mapped on read to the internal field names in parentheses):
-    - ``tax_year`` (int): Base year for nominal amounts.
-    - ``geo`` (str): Jurisdiction key (e.g. "BC"); rows are filtered to the
-      requested jurisdiction on read.
-    - ``credit`` (str, → ``credit_kind``): Human-readable credit name.
-    - ``amount`` (float, optional, → ``credit_amount``): Base dollar amount.
-    - ``top`` (float, optional, → ``cap``): Income cap / upper phaseout bound.
-    - ``rate`` (float): Credit rate, recorded in the CSV for reference; not
-      parsed at runtime — the model values the credit base at the bottom
-      marginal rate (``pit_rates[0]``).
-    - ``clawback`` (float, optional, → ``clawback_start``): Income where
-      phaseout begins.
-    - ``clawback_rate`` (float, optional): Phaseout rate, recorded for
-      reference; not parsed (the runtime applies no spousal clawback —
-      the clawback data is saved but deliberately inert).
-    - ``index`` (int, 0/1, → ``indexing``): Whether the amount is statutorily
-      indexed. Recorded for reference; not used to compute anything (there is
-      no forward projection).
-
-Eligibility mapping
---------------------
-The credit *kind* string is mapped to eligibility rules internally:
-
-    ==================== ===============================================
-    ``credit_kind``       Eligibility rule
-    ==================== ===============================================
-    ``Personal Amount``   Universal (every individual).
-    ``Age Amount``        Age ≥ 65.
-    ``Spousal Amount``    Couple household, income-tested against the spouse.
-    ``Equivalent To…``    Single-parent household.
-    ``CPP Amount``        *(deferred — requires contribution data)*
-    ``EI Amount``         *(deferred — requires contribution data)*
-    ``Pension Income…``   *(deferred — requires pension income data)*
-    ==================== ===============================================
-
-Lookup-only
------------
-``get_credits(tax_year=T)`` returns the actual published components for *T*
-(amounts, clawbacks, rates) when *T* is one of the schedule's years, and raises
-otherwise.  The reader does not compound or project past the published years —
-there is no forward projection anywhere in the pipeline, so a schedule meant to
-cover a later year (including a legislated freeze) must carry an explicit row
-for it.
+Each credit is mapped internally to an eligibility rule — the Personal
+Amount is universal, the Age Amount is age-gated, the Spousal and Equivalent To
+Spouse amounts are household-tested; other known BC credits are recorded but
+deferred until the model carries their eligibility signal. Lookups are
+statutory only: a requested year must be published in the CSV, since the
+schedule is never projected past the years it records.
 """
 
 from __future__ import annotations
@@ -68,43 +24,26 @@ from typing import Optional
 import numpy as np
 
 
-# ── required CSV columns (consolidated ``non_refundable_tax_credits.csv``) ──
+# Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
-    "tax_year",  # int — taxation year the row applies to
-    "geo",       # str — jurisdiction key (e.g. "BC"); rows are geo-filtered
-    "credit",    # str — credit kind, e.g. "Personal Amount", "Age Amount"
-    "index",     # int (0/1) — whether indexed in projection
-}
-
-# Boundary mapping from the consolidated CSV columns to the internal field
-# names used throughout the pipeline (applied unconditionally on read).
-_CREDIT_COLUMN_MAP = {
-    "credit": "credit_kind",
-    "amount": "credit_amount",
-    "top": "cap",
-    "clawback": "clawback_start",
-    "index": "indexing",
+    "tax_year",  # taxation year the row applies to
+    "geo",       # jurisdiction key (e.g. "BC")
+    "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
+    "index",     # whether the amount is statutorily indexed
 }
 
 
-# ── eligibility mapping: credit_kind → eligibility rules ──────────────
-# Each entry is a dict of rules to check.  An individual is eligible
-# iff *all* rules in the dict are satisfied.  Expand as new credits
-# are activated.
-
+# Maps each credit to a dict of eligibility rules; an individual is
+# eligible when all rules in the dict are satisfied. Expand as credits activate.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
-    # ── Active: eligibility the runtime credit pool can express today. ──
+    # Active: eligibility the runtime credit pool can express today.
     "Personal Amount":          {},                                     # universal
     "Age Amount":               {"age_min": 65},
     "Spousal Amount":           {"in_couple_household": True},          # married / common-law
     "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
-    # ── Deferred: known BC credits whose eligibility signal the model does not
-    #    yet carry.  Each key is deliberately one the config builder cannot
-    #    express (see _EXPRESSIBLE_ELIGIBILITY_KEYS in central_government_builder),
-    #    so the builder SKIPS the credit rather than granting it to everyone.
-    #    To activate one: add the per-individual attribute, give it a runtime
-    #    branch in pit_pools._credit_amount, and move its key into the
-    #    expressible set.  See nuances flagged on each before activating.
+    # Deferred: known BC credits whose eligibility signal the model does not yet
+    # carry, so the builder skips them. Trailing notes flag nuances to resolve
+    # before activating one.
     "Pension Income Amount":    {"has_eligible_pension_income": True},  # lesser of $1000 or actual eligible pension income; NOT age-based (CPP may start 60-70, also covers non-CPP pension)
     "B.C. Caregiver Amount":        {"is_caregiver": True},            # caring for a dependant with impairment; clawed back on the dependant's income
     "Disability Amount":            {"has_disability": True},          # DTC-eligible individual
@@ -116,58 +55,34 @@ _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
 }
 
 
-# ══════════════════════════════════════════════════════════════════════
-# TaxCreditComponent
-# ══════════════════════════════════════════════════════════════════════
-
 @dataclass
 class TaxCreditComponent:
     """A single non-refundable tax credit defined for a base tax year.
 
     Attributes:
-        kind: Human-readable credit name (e.g. ``"Age Amount"``).
+        credit: Human-readable credit name (e.g. ``"Age Amount"``).
         amount: Base dollar amount in the base tax year.
-        indexing: Whether the amount is statutorily indexed.  Recorded for
+        index: Whether the amount is statutorily indexed.  Recorded for
             reference only; not consumed anywhere (there is no forward
             projection).
         eligibility: Dict of eligibility rules (e.g. ``{"age_min": 65}``).
             Empty dict means universal.
-        clawback_start: Income of spouse/dependent at which clawback
+        clawback: Income of spouse/dependent at which clawback
             begins.  None means no clawback.
-        clawback_cap: Income of spouse/dependent at which the credit
+        top: Income of spouse/dependent at which the credit
             is fully eliminated.  None means no cap.
     """
 
-    kind: str
+    credit: str
     amount: float
-    indexing: bool = True
+    index: bool = True
     eligibility: dict[str, object] = field(default_factory=dict)
-    clawback_start: Optional[float] = None
-    clawback_cap: Optional[float] = None
+    clawback: Optional[float] = None
+    top: Optional[float] = None
 
-
-# ══════════════════════════════════════════════════════════════════════
-# TaxCreditSchedule
-# ══════════════════════════════════════════════════════════════════════
 
 class TaxCreditSchedule:
-    """Collection of published tax credits, looked up by year.
-
-    Typical usage::
-
-        schedule = TaxCreditSchedule.from_csv("non_refundable_tax_credits.csv")
-        credits = schedule.get_credits(tax_year=2017)
-        # → list[TaxCreditComponent] published for 2017
-
-        # At tax time, sum eligible credit bases per individual:
-        for ind_age, ind_income in zip(ages, incomes):
-            eligible_bases = [
-                c.amount for c in credits if _is_eligible(c, ind_age, ind_income)
-            ]
-            credit = sum(eligible_bases) * bottom_bracket_rate
-    """
-
-    # ── internal ──────────────────────────────────────────────────────
+    """Collection of published tax credits, looked up by year."""
 
     def __init__(
         self,
@@ -183,8 +98,6 @@ class TaxCreditSchedule:
             if credits_by_year is not None
             else {base_year: list(credits)}
         )
-
-    # ── factories ────────────────────────────────────────────────────
 
     @classmethod
     def from_csv(
@@ -225,61 +138,53 @@ class TaxCreditSchedule:
                 f"Tax-credit CSV {path} does not contain any rows for geo {geo}"
             )
 
-        # Boundary mapping: consolidated column names -> internal field names.
-        df = df.rename(columns=_CREDIT_COLUMN_MAP)
-
-        # Minimum year, not the first row's — a valid but unsorted CSV must
-        # not silently shift the base year (it selects the base credit set).
+        # Minimum year, not the first row's, so an unsorted CSV does not shift
+        # the base credit set.
         base_year = int(df["tax_year"].min())
 
-        # ── build TaxCreditComponent for each row, grouped by tax_year so a
-        #    multi-year schedule supports statutory lookup (not a mixed list) ──
+        # Build a component per row, grouped by tax_year for statutory lookup.
         credits_by_year: dict[int, list[TaxCreditComponent]] = {}
         for _, row in df.iterrows():
-            kind = str(row["credit_kind"]).strip()
+            credit = str(row["credit"]).strip()
 
             # Parse amount — empty means no predetermined amount
-            raw_amount = row.get("credit_amount")
+            raw_amount = row.get("amount")
             if pd.isna(raw_amount) or str(raw_amount).strip() == "":
                 # Credits like CPP/EI have no predetermined amount; skip
                 continue
 
             amount = float(str(raw_amount).replace(",", ""))
-            # Keep credits even when $0 — they prove the eligibility
-            # infrastructure and open policy discussions.  The zero
-            # amount means they have no revenue impact by default.
+            # Keep $0 credits: they carry the eligibility wiring with no
+            # revenue impact by default.
 
-            indexing = bool(int(row["indexing"])) if not pd.isna(row["indexing"]) else True
+            index = bool(int(row["index"])) if not pd.isna(row["index"]) else True
 
             # Parse optional clawback fields (spousal / dependent income tests).
-            _clawback_start: Optional[float] = None
-            raw_cs = row.get("clawback_start")
+            clawback: Optional[float] = None
+            raw_cs = row.get("clawback")
             if raw_cs is not None and not (isinstance(raw_cs, float) and pd.isna(raw_cs)) and str(raw_cs).strip() != "":
-                _clawback_start = float(str(raw_cs).replace(",", ""))
+                clawback = float(str(raw_cs).replace(",", ""))
 
-            _clawback_cap: Optional[float] = None
-            raw_cc = row.get("cap")
+            top: Optional[float] = None
+            raw_cc = row.get("top")
             if raw_cc is not None and not (isinstance(raw_cc, float) and pd.isna(raw_cc)) and str(raw_cc).strip() != "":
-                _clawback_cap = float(str(raw_cc).replace(",", ""))
+                top = float(str(raw_cc).replace(",", ""))
 
             # Look up eligibility rules
-            eligibility = _ELIGIBILITY_RULES.get(kind)
+            eligibility = _ELIGIBILITY_RULES.get(credit)
             if eligibility is None:
-                # Unknown credit kind → DEFER, do not apply universally.  Assign a
-                # deliberately non-expressible marker so the config builder skips
-                # the credit instead of granting it to every individual at full
-                # amount.  Register the kind in _ELIGIBILITY_RULES (above) to make
-                # its deferral explicit, or wire a runtime branch to activate it.
+                # Unknown credit: mark it non-expressible so the config builder
+                # skips it rather than granting it to everyone.
                 eligibility = {"_deferred_unmapped": True}
 
             credits_by_year.setdefault(int(row["tax_year"]), []).append(
                 TaxCreditComponent(
-                    kind=kind,
+                    credit=credit,
                     amount=amount,
-                    indexing=indexing,
+                    index=index,
                     eligibility=eligibility,
-                    clawback_start=_clawback_start,
-                    clawback_cap=_clawback_cap,
+                    clawback=clawback,
+                    top=top,
                 )
             )
 
@@ -317,8 +222,6 @@ class TaxCreditSchedule:
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 
-    # ── properties ───────────────────────────────────────────────────
-
     @property
     def base_year(self) -> int:
         """Base tax year (all amounts are nominal for this year)."""
@@ -329,19 +232,15 @@ class TaxCreditSchedule:
         """All credit components for the base year (nominal amounts)."""
         return list(self._credits)
 
-    # ── public methods ───────────────────────────────────────────────
-
     def get_credits(
         self,
         tax_year: int,
     ) -> list[TaxCreditComponent]:
         """Return the published credit components for *tax_year* (statutory lookup).
 
-        Lookup-only: a year present in the schedule returns its OWN published
-        components — actual amounts, clawbacks, and rates.  A year not in the
-        schedule raises; there is no forward projection — a schedule meant to
-        cover a later year (including a legislated freeze) must carry an
-        explicit row for it.
+        A year present in the schedule returns its own published amounts,
+        clawbacks, and rates. A year not in the schedule raises, since the
+        reader does not project past published years.
 
         Args:
             tax_year: Target tax year.

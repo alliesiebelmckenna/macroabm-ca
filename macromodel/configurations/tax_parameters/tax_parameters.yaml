@@ -1,56 +1,24 @@
-# Canada/BC-specific tax scalar parameters.
-#
-# This file centralises the *scalar* tax parameters that the project adds on
-# top of the upstream model.  It exists so that jurisdiction-specific values
-# and modelling assumptions are managed in one place rather than scattered as
-# defaults across the configuration classes.
-#
-# SCOPE — scalars only.
-#   Progressive bracket schedules and tax-credit amount schedules are NOT kept
-#   here.  Those are published, multi-row, per-year tables (statutory lookup,
-#   no forward projection) and live in their own CSV files in the taxation
-#   directory (raw_data_path/"taxation", with
-#   spoof_data/freda as the committed fallback; read by PITSchedule /
-#   TaxCreditSchedule).  Putting them here as well would create two competing
-#   sources of truth for the same numbers.
-#
-# STRUCTURE.
-#   <jurisdiction>:
-#     <tax_year>:
-#       <scalar field>: <value>
-#   Each scalar field name matches a field on CentralGovernmentConfiguration;
-#   the reader applies the block as an override via model_copy(update=...).
-#
-# PROVENANCE.
-#   Each value is tagged as either a published figure (from a statutory rate
-#   schedule) or an ASSUMPTION (a modelling guess that should be revisited).
+# Canada/BC-specific scalar tax parameters, keyed by jurisdiction and tax year.
+# Scalars only: bracket and credit schedules live in the taxation CSVs, not here.
+# Each field name matches a CentralGovernmentConfiguration field; the reader
+# applies a block as an override. Values are tagged ASSUMPTION where they are a
+# modelling guess to revisit rather than a published figure.
 
 bc:
   2014:
-    # ── Dividend integration (Canadian gross-up + dividend tax credit) ──
-    # Fallback switch, used ONLY when no dividend tax credit schedule CSV is
-    # present.  When build_central_government_configuration finds the schedule
-    # (spoof_data/freda/bc_dividend_tax_credit_schedule.csv) it activates
-    # integration automatically and this value is overridden to True.  Kept
-    # False here so the no-schedule path preserves upstream parity.
+    # Dividend integration fallback switch, used only when no dividend schedule
+    # CSV is present; when the schedule is found, integration is activated
+    # automatically and this is overridden to True. Kept False for parity.
     pit_dividend_integration: false
 
-    # ASSUMPTION — provisional uniform split of firm dividends into
-    # other-than-eligible (small-business-rate) vs eligible.  s = share treated
-    # as other-than-eligible; (1 - s) is eligible.
+    # ASSUMPTION: provisional uniform split of firm dividends; s = share treated
+    # as other-than-eligible (small-business rate), (1 - s) eligible.
     dividend_small_business_share: 0.90
 
-    # Banks are taxed at the general corporate rate; all bank dividends are
-    # eligible (s = 0 is definitional, not an assumption).
+    # Banks are taxed at the general corporate rate, so all bank dividends are
+    # eligible (s = 0 is definitional).
     bank_dividend_small_business_share: 0.0
 
-    # NOTE — the published gross-up and dividend-tax-credit rates are NOT scalars
-    # here.  They vary by year and dividend type and live in the schedule CSV
-    # spoof_data/freda/bc_dividend_tax_credit_schedule.csv, read by
-    # DividendTaxCreditSchedule and applied by build_central_government_configuration.
-
-    # ── Household rental-income attribution ──
-    # ASSUMPTION — share of a couple household's rental income assigned to the
-    # higher earner when distributing household rental income to individuals
-    # for progressive PIT.  0.5 = equal 50/50 split.
+    # ASSUMPTION: share of a couple household's rental income assigned to the
+    # higher earner. 0.5 = equal 50/50 split.
     couple_rental_income_split: 0.5

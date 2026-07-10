@@ -344,14 +344,13 @@ class Individuals(Agent):
     ) -> np.ndarray:
         """Per-individual gross firm dividend ``D_i`` (before personal tax).
 
-        The actual after-corporate-tax dividend a ``FIRM_INVESTOR`` receives:
-        ``payout_ratio × (1 − tau_firm) × max(0, firm_profits[invested_firm])``;
-        zero for everyone else.  This is the *real* dividend (the household's
-        cash) — the income-tax gross-up and dividend tax credit are derived
-        from it separately and never change it.  Mirrors the firm-investor
-        term in :meth:`compute_income` but without the at-source income-tax
-        haircut (that haircut is replaced by the PIT schedule when dividend
-        integration is enabled).
+        The actual after-corporate-tax dividend a ``FIRM_INVESTOR`` receives
+        (``payout_ratio * (1 - tau_firm) * max(0, firm_profits[invested_firm])``),
+        zero for everyone else. This is the real dividend (the household's cash);
+        the income-tax gross-up and dividend tax credit are derived from it
+        separately. Mirrors the firm-investor term in ``compute_income`` without
+        the at-source income-tax haircut (replaced by the PIT schedule when
+        dividend integration is enabled).
 
         Args:
             firm_profits: Current profit per firm.
@@ -378,13 +377,12 @@ class Individuals(Agent):
     ) -> np.ndarray:
         """Per-individual gross bank dividend ``D_i`` (before personal tax).
 
-        The actual after-corporate-tax dividend a ``BANK_INVESTOR`` receives:
-        ``payout_ratio × (1 − tau_firm) × max(0, bank_profits[invested_bank])``;
-        zero for everyone else.  Mirrors :meth:`compute_gross_firm_dividend`
-        for bank investors.  The eligible/non-eligible split is governed by
-        ``bank_dividend_small_business_share`` (default 0.0 — definitional, as
-        banks are always taxed at the general corporate rate) and is applied
-        downstream in :func:`~macromodel.agents.central_government.pit_pools.build_dividend_tax_items`.
+        The actual after-corporate-tax dividend a ``BANK_INVESTOR`` receives,
+        zero for everyone else; mirrors ``compute_gross_firm_dividend`` for bank
+        investors. The eligible/non-eligible split is governed by
+        ``bank_dividend_small_business_share`` (default 0.0, since banks are taxed
+        at the general corporate rate) and applied downstream in
+        ``build_dividend_tax_items``.
 
         Args:
             bank_profits: Current profit per bank.

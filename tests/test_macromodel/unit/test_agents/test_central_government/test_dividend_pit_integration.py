@@ -1,20 +1,12 @@
-"""Integration tests for the bank-dividend → PIT pipeline.
+"""Integration tests for the bank-dividend to PIT pipeline.
 
-Covers four layers:
-  1. Pool arithmetic — ``build_dividend_tax_items`` with ``small_business_share``
-     variations, and how the grossed-up result enters ``build_taxable_income_pool``.
-  2. End-to-end revenue — ``CentralGovernment.compute_taxes`` with a bank
-     dividend present raises PIT revenue and matches the manual schedule.
-  3. States propagation — ``bank_dividend_small_business_share`` flows from
-     ``CentralGovernmentConfiguration`` into ``CentralGovernment.states``.
-  4. Country-level wiring — the full chain from raw bank profits through
-     ``Individuals.compute_gross_bank_dividend`` and ``build_dividend_tax_items``
-     (reading ``cg.states["bank_dividend_small_business_share"]``) to PIT revenue.
-     Regression guard: uses a bank share (0.25) distinct from the firm share (0.9)
-     so any key confusion produces a numerically different result.
-     Limitation: does not call ``Country.update_realised_metrics`` directly
-     (the method is too large to run in isolation); a future test at the
-     simulation level would be needed to catch country.py key-read regressions.
+Covers four layers: the pool arithmetic (``build_dividend_tax_items`` feeding
+``build_taxable_income_pool``), end-to-end revenue through
+``CentralGovernment.compute_taxes``, propagation of
+``bank_dividend_small_business_share`` into the agent states, and the
+country-level wiring from raw bank profits to PIT revenue. The country-level
+test uses a bank share (0.25) distinct from the firm share (0.9) as a regression
+guard against key confusion.
 """
 
 import numpy as np

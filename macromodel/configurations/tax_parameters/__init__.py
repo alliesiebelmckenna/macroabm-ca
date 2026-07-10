@@ -1,11 +1,10 @@
 """Canada/BC-specific scalar tax parameters and their reader.
 
 The ``tax_parameters.yaml`` file records the scalar tax parameters this project
-adds on top of the upstream model, keyed by jurisdiction and tax year.  The
+adds on top of the upstream model, keyed by jurisdiction and tax year; the
 reader applies a block as an override onto ``CentralGovernmentConfiguration``.
-Schedule data (brackets, credit amounts) is excluded -- it lives in CSVs in the
-taxation directory (``raw_data_path / "taxation"``, with ``spoof_data/freda`` as
-the committed fallback).
+Schedule data (brackets, credit amounts) is excluded — it lives in the taxation
+CSVs.
 """
 
 from .central_government_builder import (

@@ -13,7 +13,7 @@ from macromodel.configurations import (
 )
 from macromodel.country import Country
 from macromodel.exchange_rates import ExchangeRates
-from macromodel.utils.prehooks import create_pit_indexing_hook
+from macromodel.utils.prehooks import create_pit_schedule_update_hook
 
 # Committed BC schedules (test fixtures).
 #   parents[0]=test_country [1]=unit [2]=test_macromodel [3]=tests [4]=repo root
@@ -206,12 +206,12 @@ class TestCountry:
         )
         assert "pit_thresholds" not in country.central_government.states
 
-    def test_pit_indexing_advances_brackets_end_to_end(self, datawrapper, tmp_path):
+    def test_pit_schedule_update_advances_brackets_end_to_end(self, datawrapper, tmp_path):
         """Integration of the whole indexing chain on a real ``Country``.
 
         Injects a *multi-year* taxation schedule (a 2016 bottom-rate change), so
         ``Country.from_pickled_country`` builds the per-year schedule table onto
-        the real central-government agent.  The real ``pit_indexing`` pre-hook is
+        the real central-government agent.  The real ``pit_schedule_update`` pre-hook is
         then driven across calendar years and the agent's live ``pit_thresholds``
         / ``pit_rates`` are checked to advance (published) and to reject a year
         beyond the last published one — exercising builder → agent states →
@@ -266,7 +266,7 @@ class TestCountry:
 
         # Drive the REAL pre-hook (not a stub) over a minimal simulation holder;
         # the country and agent are the real constructed objects.
-        hook = create_pit_indexing_hook()
+        hook = create_pit_schedule_update_hook()
         simulation = types.SimpleNamespace(countries={"FRA": country})
 
         # 2014 (construction year): the published base brackets, scaled.

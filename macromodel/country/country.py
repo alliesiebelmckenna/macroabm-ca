@@ -73,16 +73,7 @@ from macromodel.util.get_histogram import get_histogram
 
 
 def _scaled_tax_credit(credit: TaxCreditDef, scale: int) -> TaxCreditDef:
-    """Return a copy of *credit* with every currency field in agent units.
-
-    Reflection-driven: scales exactly the fields declared ``unit="currency"``
-    on the credit's class (see the unit-declaration block in
-    ``central_government_configuration``), so a currency field added to
-    ``TaxCreditDef`` later is scaled automatically, and an undeclared numeric
-    field raises rather than silently skipping the conversion.  Non-currency
-    fields (``eligibility_age_min``, ``indexing``, ``kind``) pass through
-    unchanged.
-    """
+    """Return a copy of *credit* with its ``unit="currency"`` fields scaled to agent units."""
     updates = {
         name: getattr(credit, name) * scale
         for name in monetary_field_names(type(credit))
@@ -94,41 +85,12 @@ def _scaled_tax_credit(credit: TaxCreditDef, scale: int) -> TaxCreditDef:
 def _scale_pit_policy(
     config: CentralGovernmentConfiguration, scale: int
 ) -> CentralGovernmentConfiguration:
-    """Return a copy of *config* with every PIT policy dollar in agent units.
+    """Return a copy of *config* with every PIT policy dollar scaled to agent units.
 
-    Statutory tax parameters are published in per-person dollars; agent incomes
-    are agent-level dollars (each synthetic agent represents ``scale`` people).
-    This helper is the single seam where that conversion happens — both the
-    construction-year configuration and every per-year schedule entry
-    (``_build_pit_schedule_by_year``) pass through it, so the two paths cannot
-    diverge.  It converts:
-
-      * bracket thresholds (rates are unit-free; the open-top ``inf`` stays
-        infinite under multiplication),
-      * every ``TaxCreditDef`` field declared ``unit="currency"`` — amounts and
-        clawback bounds today, and any currency field added later
-        (:func:`_scaled_tax_credit`),
-      * every configuration field declared ``unit="currency"``
-        (``pit_taxable_income_deductions`` today), by the same reflection.
-
-    Income streams need no counterpart conversion: everything entering
-    ``PitContext`` is already in agent dollars (scaled at the data layer or
-    derived from agent-level aggregates), so once the policy dollars match,
-    bracket and clawback comparisons are dimensionally consistent for any
-    current or future stream.
-
-    ``scale <= 1`` is an identity (per-person units already agree with agent
-    units).  The caller-owned *config* is never mutated — a scaled copy is
-    returned — so repeated Country construction or calibration loops do not
-    compound the scaling.
-
-    Args:
-        config: The government configuration in per-person dollar units.
-        scale: Population scaling factor (people per synthetic agent).
-
-    Returns:
-        A configuration in agent dollar units (or *config* itself when no
-        conversion is needed).
+    The single seam converting per-person statutory dollars (brackets, credit
+    currency fields, deductions) to agent-level units, so the construction-year
+    config and the per-year schedule cannot diverge. ``scale <= 1`` is an
+    identity; the caller-owned *config* is not mutated.
     """
     if scale <= 1:
         return config
@@ -157,37 +119,12 @@ def _build_pit_schedule_by_year(
     taxation_reader,
     scale: int,
 ) -> Optional[dict[int, dict]]:
-    """Resolve the progressive PIT schedule for every year the data covers.
+    """Build the ``{tax_year: state_fragment}`` PIT schedule table for every published year.
 
-    Returns a ``{tax_year: state_fragment}`` table where each fragment holds the
-    ``pit_thresholds`` / ``pit_rates`` / ``pit_tax_credits`` /
-    ``pit_taxable_income_deductions`` for that statutory year — pre-scaled to
-    agent units exactly as the single construction-year schedule is (both paths
-    go through :func:`_scale_pit_policy`).  The
-    :meth:`CentralGovernment.set_pit_for_year` lookup later swaps the matching
-    fragment into the agent's ``states`` as the simulation's calendar year
-    advances.
-
-    Building every year here (rather than CPI-compounding at run time) means the
-    table carries the *actual published* values per year — including marginal
-    rate changes, new brackets, and credit reforms that a CPI inflation of the
-    base year cannot express.  The table only ever holds published years — there
-    is no forward projection past the last one; a simulation year beyond the
-    table is the caller's error to raise (see
-    ``CentralGovernment.set_pit_for_year``).
-
-    Returns ``None`` (no table, indexing stays off) when progressive PIT is not
-    opted in or no taxation data is present.
-
-    Args:
-        base_config: The government's base configuration (carries the
-            ``activate_progressive_pit`` opt-in and non-tax fields).
-        taxation_reader: The jurisdiction's loaded schedules, or ``None``.
-        scale: Population scaling factor; thresholds are multiplied by it to move
-            from per-individual to agent-level income units.
-
-    Returns:
-        The per-year schedule table, or ``None`` when indexing is inactive.
+    Each fragment holds that year's agent-scaled thresholds, rates, credits, and
+    deduction, which ``CentralGovernment.set_pit_for_year`` swaps into the agent
+    states as the calendar year advances. Returns ``None`` when progressive PIT
+    is not opted in or no taxation data is present.
     """
     if taxation_reader is None or not base_config.activate_progressive_pit:
         return None
@@ -206,9 +143,6 @@ def _build_pit_schedule_by_year(
         if config_year.pit_brackets is None:
             continue
 
-        # Same agent-unit conversion as the construction path: brackets,
-        # credit currency fields, and the deduction all pass through the one
-        # shared scaling seam.
         config_year = _scale_pit_policy(config_year, scale)
         brackets_array = np.array(config_year.pit_brackets, dtype=float)
 
@@ -492,26 +426,13 @@ class Country:
 
         n_unemployed = (individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED).sum()
 
-        # Consume the country's taxation schedules: when this government opted in
-        # (activate_progressive_pit) and the country carries taxation data, layer
-        # the progressive PIT schedule (brackets, credits, dividend rates) onto
-        # its config; otherwise the flat config is used unchanged (parity).  This
-        # is per-government and jurisdiction-keyed (see activate_taxation), so it
-        # extends to multiple government agents without change here.
+        # Layer the progressive PIT schedule onto the config when opted in, then
+        # scale its policy dollars to agent units.
         central_government_config = activate_taxation(
             base_config=country_configuration.central_government,
             taxation_reader=synthetic_country.taxation,
             tax_year=initial_year,
         )
-
-        # Scale the PIT policy dollars to agent-level income units.
-        # Each synthetic agent represents *scale* real people, so a $50k
-        # bracket for individuals becomes $50k × scale for agents — and the
-        # same conversion applies to credit amounts, clawback bounds, and the
-        # taxable-income deduction, which are compared against (or subtracted
-        # from) agent-scale incomes.  _scale_pit_policy returns a scaled copy;
-        # the caller-owned configuration is never mutated, so repeated Country
-        # construction or calibration loops do not compound the scaling.
         central_government_config = _scale_pit_policy(central_government_config, scale)
 
         central_government = CentralGovernment.from_pickled_agent(
@@ -525,14 +446,7 @@ class Country:
             n_industries=n_industries,
         )
 
-        # --- Progressive PIT: per-year statutory schedule table ---
-        # Resolve each available year's brackets/credits (with the SAME agent
-        # scaling applied above) and stash the table on the agent.  The
-        # pit_indexing pre-hook reads it via set_pit_for_year to advance the
-        # schedule across the simulation's calendar years.  Keyed off the data
-        # the reader carries (no base-year literal); a single-year schedule or
-        # absent/flat config yields no table, so the schedule holds flat —
-        # matching the no-indexing parity path.
+        # Per-year PIT schedule table for the pit_schedule_update pre-hook.
         pit_schedule_by_year = _build_pit_schedule_by_year(
             base_config=country_configuration.central_government,
             taxation_reader=synthetic_country.taxation,
@@ -541,23 +455,14 @@ class Country:
         if pit_schedule_by_year:
             central_government.states["pit_schedule_by_year"] = pit_schedule_by_year
 
-        # --- Progressive PIT: pre-calibrate the effective rate ---
-        # When a progressive schedule is configured, compute the
-        # implied effective tax rate on the synthetic employee income
-        # distribution and overwrite states["Income Tax"].  This ensures
-        # that the very first period's wage-setting, after-tax income,
-        # and rental income calculations use the schedule-consistent
-        # rate rather than the raw OECD average — eliminating a
-        # calibration shock at t=0.
+        # Pre-calibrate states["Income Tax"] to the schedule-implied effective
+        # rate so the first period carries no t=0 calibration shock.
         pit_thresholds = central_government.states.get("pit_thresholds")
         pit_rates = central_government.states.get("pit_rates")
         if pit_thresholds is not None and pit_rates is not None:
             ind_ages = individuals.states.get("Age")
             ind_corr_hh = individuals.states.get("Corresponding Household ID")
 
-            # Processing phase: assemble Pool A (taxable income) and Pool B
-            # (credit base) on the synthetic employee-income distribution,
-            # then let the government's tax core imply the effective rate.
             pit_ctx = PitContext(
                 employee_income=individuals.states["Employee Income"],
                 employee_si_rate=float(
@@ -574,8 +479,6 @@ class Country:
                 taxable_pool,
                 pit_ctx,
             )
-            # compute_pit updates states["Income Tax"] to the schedule-implied
-            # effective rate (the pre-calibration goal).
             central_government.compute_pit(taxable_pool, credit_pool)
 
         government_entities = GovernmentEntities.from_pickled_agent(
@@ -1610,11 +1513,7 @@ class Country:
         self.economy.ts.bank_insolvency_rate.append([self.banks.compute_insolvency_rate()])
 
         # G5. GOVERNMENT REVENUE
-        # Processing phase: distribute household-level rental and financial
-        # income to individuals, then assemble the two PIT pools (taxable
-        # income + credit base).  Adding a new income stream or tax credit
-        # means editing pit_pools.py and this block — the central
-        # government's tax core (compute_pit) stays fixed.
+        # Distribute household income to individuals and assemble the PIT pools.
         ind_ages = self.individuals.states.get("Age")
         ind_corr_hh = self.individuals.states.get("Corresponding Household ID")
 
@@ -1632,12 +1531,8 @@ class Country:
             individuals_age=ind_ages,
         )
 
-        # Dividend integration (off by default → both arrays stay None,
-        # the pool and credits are unchanged, full upstream parity).  When on,
-        # gross up both firm and bank dividends for taxable income (pool A) and
-        # build the dividend tax credits (the 2b direct credit).  The real
-        # dividends received by households are computed separately in income.py
-        # and are not affected by these tax-only quantities.
+        # Dividend integration (off by default): gross up firm and bank dividends
+        # for the taxable pool and build the dividend tax credits.
         grossed_up_dividend_per_ind = None
         dividend_tax_credit_per_ind = None
         if self.central_government.states.get("pit_dividend_integration", False):
@@ -1695,9 +1590,7 @@ class Country:
                 self.households.states["Tenure Status of the Main Residence"] == 3
             ].sum(),
             current_income_financial_assets=self.households.ts.current("income_financial_assets"),
-            # Pass both individual income streams so the direct-call fallback
-            # (when the prebuilt pools below are omitted) can rebuild the
-            # taxable-income pool symmetrically. The main path uses the pools.
+            # For the direct-call fallback; the main path uses the pools below.
             current_ind_rental_income=rental_income_per_individual,
             current_ind_financial_income=financial_income_per_individual,
             current_ind_activity=self.individuals.states["Activity Status"],

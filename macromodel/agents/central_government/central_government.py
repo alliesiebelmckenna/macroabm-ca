@@ -39,27 +39,17 @@ from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute
 def pit_credit_defs_to_state_dicts(pit_tax_credits) -> list[dict]:
     """Convert configuration ``TaxCreditDef`` objects to the runtime credit dicts.
 
-    The runtime credit pool (``pit_pools._credit_amount``) and the CPI stepper
-    consume tax credits as plain dicts keyed by ``kind``/``amount``/``indexing``/
-    ``age_min`` (plus optional clawback bounds).  Both ``from_pickled_agent`` (the
-    construction-time conversion) and the per-year schedule table built in
-    ``country.py`` must produce the *identical* dict shape, so the mapping lives
-    here in one place.
-
-    Args:
-        pit_tax_credits: Iterable of ``TaxCreditDef`` from the configuration.
-
-    Returns:
-        One dict per credit, in input order.
+    Shared by ``from_pickled_agent`` and the per-year schedule table so both
+    produce the identical dict shape the runtime credit pool consumes.
     """
     return [
         {
-            "kind": t.kind,
+            "credit": t.credit,
             "amount": t.amount,
-            "indexing": t.indexing,
+            "index": t.index,
             "age_min": t.eligibility_age_min,
-            "clawback_start": t.clawback_start,
-            "clawback_cap": t.clawback_cap,
+            "clawback": t.clawback,
+            "top": t.top,
         }
         for t in pit_tax_credits
     ]
@@ -165,8 +155,7 @@ class CentralGovernment(Agent):
             "other_benefits_model": synthetic_central_government.other_benefits_model,
         }
 
-        # Progressive PIT schedule (optional — None means use flat Income Tax).
-        # Activated for any country/region whose config sets pit_brackets.
+        # Progressive PIT schedule; absent pit_brackets means flat Income Tax.
         if configuration.pit_brackets is not None:
             brackets = np.array(configuration.pit_brackets, dtype=float)
             states["pit_thresholds"] = brackets[:, 0]
@@ -178,11 +167,9 @@ class CentralGovernment(Agent):
                     configuration.pit_tax_credits
                 )
 
-        # Couple rental income split for progressive PIT
         states["couple_rental_income_split"] = configuration.couple_rental_income_split
 
-        # Dividend integration params (see CentralGovernmentConfiguration).
-        # The flag defaults False (legacy at-source treatment, upstream parity).
+        # Dividend integration params (flag defaults False for parity).
         states["pit_dividend_integration"] = configuration.pit_dividend_integration
         states["dividend_small_business_share"] = configuration.dividend_small_business_share
         states["bank_dividend_small_business_share"] = configuration.bank_dividend_small_business_share
@@ -316,9 +303,8 @@ class CentralGovernment(Agent):
         current_household_new_real_wealth: np.ndarray | None = None,
         taxes_less_subsidies_rates: np.ndarray | None = None,
         current_total_exports: float = 0.0,
-        # New (Canadian tax layer) parameters are appended AFTER every upstream
-        # parameter, so a positional caller of the original signature still
-        # binds correctly.
+        # New tax-layer parameters are appended after every upstream parameter,
+        # so a positional caller of the original signature still binds correctly.
         current_ind_rental_income: np.ndarray | None = None,
         current_ind_financial_income: np.ndarray | None = None,
         individuals_age: np.ndarray | None = None,
@@ -338,13 +324,9 @@ class CentralGovernment(Agent):
         - Social insurance contributions
         - Capital formation and export taxes
 
-        Progressive PIT consumes two pre-assembled pools — taxable income
-        per individual (``taxable_income_per_ind``) and credit base per
-        individual (``credit_base_per_ind``) — built in the processing
-        phase (see :mod:`macromodel.agents.central_government.pit_pools`).
-        When they are not supplied (e.g. direct/unit-test calls), they are
-        assembled here from the raw income and household-context arguments
-        via the same shared builders, so behaviour is identical either way.
+        Progressive PIT consumes the pre-assembled taxable-income and credit-base
+        pools; when they are not supplied, they are assembled here from the raw
+        income and household-context arguments.
 
         Args:
             current_ind_employee_income (np.ndarray): Employee incomes per individual
@@ -360,11 +342,11 @@ class CentralGovernment(Agent):
             current_household_new_real_wealth (np.ndarray): New wealth
             taxes_less_subsidies_rates (np.ndarray): Net tax rates
             current_total_exports (float): Total exports
-            current_ind_rental_income (Optional[np.ndarray]): Gross rental income per individual.
-                Used only to assemble the taxable pool in the direct-call fallback (when
-                ``taxable_income_per_ind`` is not supplied); ignored when the pools are passed.
-            current_ind_financial_income (Optional[np.ndarray]): Financial income per individual.
-                Fallback-only, same as ``current_ind_rental_income``.
+            current_ind_rental_income (Optional[np.ndarray]): Gross rental income
+                per individual. Used only in the direct-call fallback; ignored
+                when the pools are passed.
+            current_ind_financial_income (Optional[np.ndarray]): Financial income
+                per individual. Fallback-only.
             individuals_age (Optional[np.ndarray]): Age per individual
             individuals_corr_households (Optional[np.ndarray]): Household ID per individual
             households_type (Optional[np.ndarray]): HouseholdType enum per household
@@ -398,25 +380,16 @@ class CentralGovernment(Agent):
         # Taxes on exports
         self.ts.taxes_exports.append([self.states["Export Tax"] * current_total_exports])
 
-        # Total wages of employed individuals (after Employee SI deduction —
-        # this is the standard taxable base for personal income tax)
+        # Total wages of employed individuals
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
-        # Personal income tax: progressive when a schedule is
-        # configured, otherwise flat on all income components.
+        # Personal income tax: progressive when a schedule is configured, else flat.
         pit_thresholds = self.states.get("pit_thresholds")
         pit_rates = self.states.get("pit_rates")
 
         if pit_thresholds is not None and pit_rates is not None:
-            # --- Progressive PIT on the two pre-assembled pools ---
-            # Pool A (taxable income) and Pool B (credit base) are normally
-            # built in the processing phase (country.py) and passed in.
-            # When either pool is omitted (direct / unit-test calls),
-            # assemble the missing one(s) here from the raw inputs via the
-            # shared pit_pools builders, so the result is identical
-            # regardless of caller.  Each pool is built independently:
-            # supplying taxable income alone must still apply configured
-            # credits (otherwise gross PIT would leak through).
+            # Assemble any pool not supplied by the processing phase; each is
+            # built independently so taxable income alone still applies credits.
             if taxable_income_per_ind is None or credit_base_per_ind is None:
                 ctx = PitContext(
                     employee_income=current_ind_employee_income,
@@ -442,7 +415,7 @@ class CentralGovernment(Agent):
                 taxable_income_per_ind, credit_base_per_ind, direct_credits_per_ind
             )
         else:
-            # --- Flat tax (backward-compatible path) ---
+            # Flat tax (backward-compatible path).
             total_income_tax = (
                 self.states["Income Tax"] * (1 - self.states["Employee Social Insurance Tax"]) * tot_wages_employed_ind
                 + self.states["Income Tax"] * current_total_rent_paid
@@ -451,11 +424,8 @@ class CentralGovernment(Agent):
 
         self.ts.taxes_income.append([total_income_tax])
 
-        # Rental tax reported for the period.  This is a *reporting* figure
-        # (it feeds the GDP rent_received term), not extra revenue — the
-        # rental tax is already inside taxes_income.  Computed exactly as in
-        # the original model: the effective Income Tax rate (updated by
-        # compute_pit in the progressive path) on household rent paid.
+        # Rental tax: a reporting figure (feeds GDP rent_received), already
+        # inside taxes_income; the effective Income Tax rate on rent paid.
         self.ts.taxes_rental_income.append(
             [self.states["Income Tax"] * current_total_rent_paid]
         )
@@ -472,48 +442,20 @@ class CentralGovernment(Agent):
         credit_base_per_ind: np.ndarray | None = None,
         direct_credits_per_ind: np.ndarray | None = None,
     ) -> float:
-        """Apply fixed PIT policy to the assembled pools.
+        """Apply fixed PIT policy (deductions, brackets, credits) to the assembled pools.
 
-        This is the government's tax *core*. It applies taxable-income
-        deductions, the progressive bracket schedule, and subtracts the
-        non-refundable credits — then floors net tax at zero. It never
-        references individual income streams or credit kinds, so adding
-        either (in
-        :mod:`macromodel.agents.central_government.pit_pools`) leaves this
-        method untouched.
-
-        Non-refundable credit total = **2a + 2b**, both subtracted together
-        and floored at zero (excess is lost, not refunded):
-          * **2a** — ``credit_base_per_ind`` valued at the bottom marginal
-            rate (Personal/Age/Spousal/… amounts).
-          * **2b** — ``direct_credits_per_ind``, dollar-for-dollar direct
-            credits (currently the dividend tax credit).
-
-        As a side effect, the scalar ``states["Income Tax"]`` effective
-        rate is updated to the schedule-implied average so that
-        behavioural decisions (wage-setting, after-tax income, rental
-        income) stay aligned with the progressive schedule.
-
-        Accepted coupling: when dividend integration is active, the
-        grossed-up dividends and the dividend tax credit also enter this
-        blended average, so the rate they imply feeds wage-setting and
-        consumption (a second-order "ripple").  This is accepted as a
-        bounded effect -- the computed provincial average (~5%) sits well
-        below the upstream OECD flat assumption (9%), so the small upward
-        nudge from dividends stays inside a realistic provincial band and
-        in fact narrows the gap to the flat baseline rather than
-        overshooting it.  Removing the ripple would require giving
-        wage-setting its own employment-income-specific rate, which would
-        move baseline wages/GDP even with dividends off and diverge from
-        upstream wage-setting; that refactor is therefore deferred to a
-        separate, parity-checked, sign-off-gated change.
+        The government's tax core; it references no income streams or specific
+        credits, so extending either in ``pit_pools`` leaves it untouched. As a side
+        effect it updates the scalar ``states["Income Tax"]`` effective rate to
+        the schedule-implied average, which keeps wage-setting aligned with the
+        schedule (an accepted, bounded ripple when dividend integration is on).
 
         Args:
             taxable_income_per_ind: Pool A — taxable income per individual.
-            credit_base_per_ind: Pool B (2a) — summed non-refundable credit
-                base per individual (``None`` or zeros when no credits apply).
-            direct_credits_per_ind: 2b — direct dollar credits per individual
-                (the dividend tax credit); ``None`` when not applicable.
+            credit_base_per_ind: Pool B — summed non-refundable credit base per
+                individual (``None`` or zeros when no credits apply).
+            direct_credits_per_ind: Direct dollar credits per individual (the
+                dividend tax credit); ``None`` when not applicable.
 
         Returns:
             float: Total personal income tax revenue.
@@ -521,8 +463,7 @@ class CentralGovernment(Agent):
         pit_thresholds = self.states["pit_thresholds"]
         pit_rates = self.states["pit_rates"]
 
-        # Taxable-income deductions reduce the base before the brackets,
-        # so they can drop a filer into a lower bracket.
+        # Deductions reduce the base before the brackets.
         deductions = self.states.get("pit_taxable_income_deductions")
         base_for_brackets = taxable_income_per_ind
         if deductions is not None and deductions > 0:
@@ -532,10 +473,7 @@ class CentralGovernment(Agent):
             base_for_brackets, pit_thresholds, pit_rates
         )
 
-        # Non-refundable credits: 2a (base × bottom rate) + 2b (direct dollar
-        # credits, e.g. the dividend tax credit).  Both are subtracted together
-        # and the result floored at zero, so excess non-refundable credit is
-        # lost rather than refunded.
+        # Non-refundable credits, floored at zero (excess is lost, not refunded).
         total_credit = np.zeros_like(pit_per_individual, dtype=float)
         if credit_base_per_ind is not None:
             total_credit = total_credit + credit_base_per_ind * float(pit_rates[0])
@@ -571,38 +509,18 @@ class CentralGovernment(Agent):
         )
 
     def set_pit_for_year(self, tax_year: int) -> None:
-        """Swap in the PIT schedule (brackets, rates, credits, deductions) for *tax_year*.
+        """Swap in the PIT schedule for *tax_year* from ``states["pit_schedule_by_year"]``.
 
-        Statutory lookup: it selects the *already-resolved* schedule for
-        ``tax_year`` from ``states["pit_schedule_by_year"]`` — the per-year table
-        assembled in ``country.py`` from the historical schedule, with thresholds
-        already scaled to agent units.  The ``pit_indexing`` pre-hook calls this
-        once per timestep so the brackets advance as the simulation's calendar
-        year progresses.
-
-        Each year's rows are the actual published values, so the lookup carries
-        policy changes a pure indexation cannot — a marginal *rate* change (e.g.
-        BC's 2026 bottom-rate increase), a new bracket, or a credit reform.
-
-        There is no forward projection: the table only ever holds the years the
-        taxation CSV publishes explicitly (including any legislatively frozen
-        years, which must be given their own row).  A ``tax_year`` that falls
-        strictly between two published years (a gap the CSV skipped) holds at
-        the most recent year at or before it.  A ``tax_year`` before the first
-        published year uses the first year's schedule.  A ``tax_year`` *beyond*
-        the last published year raises — the simulation cannot silently run on
-        an unfunded schedule, so it must stop with a clear error instead.
-
-        No-op when ``states["pit_schedule_by_year"]`` is absent — i.e. flat-tax
-        governments and progressive governments built from a single-year
-        schedule, which therefore stay frozen at their construction year.
+        A statutory lookup with no forward projection: a year before the first
+        uses the first year's schedule, a gap year holds at the most recent prior
+        year, and a year beyond the last raises. No-op when no schedule table is
+        present (flat and single-year governments stay frozen at construction).
 
         Args:
             tax_year: The simulation's current calendar year.
 
         Raises:
-            ValueError: If ``tax_year`` exceeds the last year published in the
-                taxation schedule.
+            ValueError: If ``tax_year`` exceeds the last published year.
         """
         table = self.states.get("pit_schedule_by_year")
         if not table:
@@ -622,16 +540,13 @@ class CentralGovernment(Agent):
                 f"simulation this far."
             )
         else:
-            # A gap year within the published range (skipped in the CSV) —
-            # hold at the most recent published year at or before tax_year.
+            # Gap year: hold at the most recent published year at or before it.
             selected = max(y for y in years if y <= tax_year)
 
         fragment = table[selected]
         self.states["pit_thresholds"] = fragment["pit_thresholds"]
         self.states["pit_rates"] = fragment["pit_rates"]
-        # Clear-on-absence: the state must match the selected fragment exactly.
-        # An optional field omitted from the fragment means "not active this
-        # year", so drop any stale value rather than carrying the prior year's.
+        # Clear on absence so a field omitted this year drops any stale value.
         if "pit_taxable_income_deductions" in fragment:
             self.states["pit_taxable_income_deductions"] = fragment[
                 "pit_taxable_income_deductions"

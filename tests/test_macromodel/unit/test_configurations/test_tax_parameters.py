@@ -120,7 +120,7 @@ class TestBuildCentralGovernmentConfiguration:
 
     def test_only_runtime_applicable_credits_are_carried(self):
         config = _build("bc", 2014)
-        kinds = {c.kind for c in config.pit_tax_credits}
+        kinds = {c.credit for c in config.pit_tax_credits}
         # Universal, age-based, and the household-composition credits the runtime
         # dispatches by kind (Spousal, Equivalent-To-Spouse) are carried.
         assert "Personal Amount" in kinds
@@ -148,12 +148,12 @@ class TestBuildCentralGovernmentConfiguration:
 
         config = _build("bc", 2014)
         spousal_amt = next(
-            c.amount for c in config.pit_tax_credits if c.kind == "Spousal Amount"
+            c.amount for c in config.pit_tax_credits if c.credit == "Spousal Amount"
         )
         equiv_amt = next(
             c.amount
             for c in config.pit_tax_credits
-            if c.kind == "Equivalent To Spouse Amount"
+            if c.credit == "Equivalent To Spouse Amount"
         )
 
         # Convert the built credits into the runtime states-dict form (mirrors
@@ -161,12 +161,12 @@ class TestBuildCentralGovernmentConfiguration:
         def to_defs(credits):
             return [
                 {
-                    "kind": t.kind,
+                    "credit": t.credit,
                     "amount": t.amount,
-                    "indexing": t.indexing,
+                    "index": t.index,
                     "age_min": t.eligibility_age_min,
-                    "clawback_start": t.clawback_start,
-                    "clawback_cap": t.clawback_cap,
+                    "clawback": t.clawback,
+                    "top": t.top,
                 }
                 for t in credits
             ]
@@ -193,7 +193,7 @@ class TestBuildCentralGovernmentConfiguration:
         wo_defs = [
             d
             for d in all_defs
-            if d["kind"] not in {"Spousal Amount", "Equivalent To Spouse Amount"}
+            if d["credit"] not in {"Spousal Amount", "Equivalent To Spouse Amount"}
         ]
         delta = build_credit_base_pool(all_defs, taxable, ctx) - build_credit_base_pool(
             wo_defs, taxable, ctx
@@ -208,10 +208,10 @@ class TestBuildCentralGovernmentConfiguration:
 
     def test_age_credit_carries_age_and_clawback(self):
         config = _build("bc", 2014)
-        age = next(c for c in config.pit_tax_credits if c.kind == "Age Amount")
+        age = next(c for c in config.pit_tax_credits if c.credit == "Age Amount")
         assert age.eligibility_age_min == 65
-        assert age.clawback_start == 32943.0
-        assert age.clawback_cap == 62450.0
+        assert age.clawback == 32943.0
+        assert age.top == 62450.0
 
     def test_scalars_applied(self):
         config = _build("bc", 2014)
@@ -256,13 +256,12 @@ class TestBuildCentralGovernmentConfiguration:
         _build("bc", 2014)
         assert default.pit_brackets is None
 
-    def test_dividend_schedule_is_year_ranged(self):
-        """The dividend schedule returns a later year's OWN rates, distinct from
-        2014's (0.10 DTC / 0.18 non-eligible gross-up).  Queried directly: the
-        dividend schedule is year-ranged data, so 2019 is a real lookup, not a
-        projection."""
+    def test_dividend_schedule_per_year_lookup(self):
+        """The dividend schedule returns a later year's OWN published rates,
+        distinct from 2014's (0.10 DTC / 0.18 non-eligible gross-up). 2019 is a
+        real per-year lookup, not a projection."""
         rates = _committed_reader().dividend_schedule.get_year_rates(tax_year=2019)
-        assert rates["eligible"].dtc_rate_of_grossed_up == pytest.approx(0.12)
+        assert rates["eligible"].dtc_pct_of_grossed_up == pytest.approx(0.12)
         assert rates["non_eligible"].gross_up_rate == pytest.approx(0.15)
 
     def test_build_out_of_table_bracket_year_raises(self):

@@ -205,14 +205,14 @@ class TestCentralGovernmentPIT:
         # Low earner effective rate should be < highest bracket rate
         assert low_effective[0] < rates[-1]
 
-    # ── pit_tax_credits (multi-component) ───────
+    # pit_tax_credits (multi-component)
 
     def test_pit_tax_credits_stored(self, test_central_government_pit_full):
         """pit_tax_credits is stored in states when configured."""
         cg = test_central_government_pit_full
         assert "pit_tax_credits" in cg.states
         assert len(cg.states["pit_tax_credits"]) == 1
-        assert cg.states["pit_tax_credits"][0]["kind"] == "Personal Amount"
+        assert cg.states["pit_tax_credits"][0]["credit"] == "Personal Amount"
         assert cg.states["pit_tax_credits"][0]["amount"] == 9869.0
 
     def test_pit_tax_credits_not_stored_without_config(self, test_central_government_pit):
@@ -465,7 +465,7 @@ class TestCentralGovernmentPIT:
         ).sum()
         assert tax == pytest.approx(expected)
 
-    # ── Pre-calibration: effective rate from employee income ─────
+    # Pre-calibration: effective rate from employee income
 
     def test_pre_calibration_effective_rate_in_country_construction(
         self, datawrapper, test_individuals,
@@ -540,12 +540,12 @@ class TestSetPitForYear:
     @staticmethod
     def _credit(amount):
         return {
-            "kind": "Personal Amount",
+            "credit": "Personal Amount",
             "amount": amount,
-            "indexing": True,
+            "index": True,
             "age_min": None,
-            "clawback_start": None,
-            "clawback_cap": None,
+            "clawback": None,
+            "top": None,
         }
 
     def _seed_table(self, cg):

@@ -31,7 +31,7 @@ class TestCreditStatutoryLookup:
     @staticmethod
     def _personal(sched, year):
         return [
-            c for c in sched.get_credits(tax_year=year) if c.kind == "Personal Amount"
+            c for c in sched.get_credits(tax_year=year) if c.credit == "Personal Amount"
         ]
 
     def test_lookup_2015(self, tmp_path):

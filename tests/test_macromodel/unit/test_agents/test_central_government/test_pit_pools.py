@@ -1,10 +1,8 @@
 """Unit tests for the PIT pool builders (the processing phase).
 
-These exercise :mod:`macromodel.agents.central_government.pit_pools` in
-isolation — the pure functions that assemble Pool A (taxable income) and
-Pool B (credit base) before the government applies tax policy.  They also
-demonstrate the extensibility goal: a new income stream is just another
-term in Pool A; a new credit is just another contributor to Pool B.
+These exercise ``pit_pools`` in isolation: the pure functions that assemble
+Pool A (taxable income) and Pool B (credit base) before the government applies
+tax policy.
 """
 
 import numpy as np
@@ -71,8 +69,8 @@ class TestTargetedCreditsRequireContext:
         ctx = self._bare_ctx()
         taxable = build_taxable_income_pool(ctx)
         credit_defs = [{
-            "kind": "Age Amount", "amount": 4426.0, "age_min": 65,
-            "clawback_start": 32943.0, "clawback_cap": 62450.0,
+            "credit": "Age Amount", "amount": 4426.0, "age_min": 65,
+            "clawback": 32943.0, "top": 62450.0,
         }]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_array_equal(base, [0.0, 0.0])
@@ -80,14 +78,14 @@ class TestTargetedCreditsRequireContext:
     def test_spousal_amount_without_household_context_is_zero(self):
         ctx = self._bare_ctx()
         taxable = build_taxable_income_pool(ctx)
-        credit_defs = [{"kind": "Spousal Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Spousal Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_array_equal(base, [0.0, 0.0])
 
     def test_equivalent_to_spouse_without_household_context_is_zero(self):
         ctx = self._bare_ctx()
         taxable = build_taxable_income_pool(ctx)
-        credit_defs = [{"kind": "Equivalent To Spouse Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Equivalent To Spouse Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_array_equal(base, [0.0, 0.0])
 
@@ -96,7 +94,7 @@ class TestTargetedCreditsRequireContext:
         ctx = self._bare_ctx()
         taxable = build_taxable_income_pool(ctx)
         base = build_credit_base_pool(
-            [{"kind": "Personal Amount", "amount": 9869.0}], taxable, ctx
+            [{"credit": "Personal Amount", "amount": 9869.0}], taxable, ctx
         )
         np.testing.assert_allclose(base, [9869.0, 9869.0])
 
@@ -111,7 +109,7 @@ class TestCreditBasePool:
     def test_universal_credit_applies_to_all(self):
         taxable = np.array([100.0, 200.0])
         ctx = PitContext(employee_income=taxable, employee_si_rate=0.0)
-        credit_defs = [{"kind": "Personal Amount", "amount": 9869.0}]
+        credit_defs = [{"credit": "Personal Amount", "amount": 9869.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_allclose(base, [9869.0, 9869.0])
 
@@ -122,7 +120,7 @@ class TestCreditBasePool:
             employee_si_rate=0.0,
             individuals_age=np.array([40, 70]),
         )
-        credit_defs = [{"kind": "Age Amount", "amount": 5000.0, "age_min": 65}]
+        credit_defs = [{"credit": "Age Amount", "amount": 5000.0, "age_min": 65}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # Only the 70-year-old is eligible (income below clawback range).
         np.testing.assert_allclose(base, [0.0, 5000.0])
@@ -135,8 +133,8 @@ class TestCreditBasePool:
             individuals_age=np.array([70, 40]),
         )
         credit_defs = [
-            {"kind": "Personal Amount", "amount": 1000.0},
-            {"kind": "Age Amount", "amount": 500.0, "age_min": 65},
+            {"credit": "Personal Amount", "amount": 1000.0},
+            {"credit": "Age Amount", "amount": 500.0, "age_min": 65},
         ]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # Person 0: personal + age; person 1: personal only.
@@ -160,13 +158,13 @@ class TestCreditBasePool:
             ),
             households_n_adults=np.array([1, 1]),
         )
-        credit_defs = [{"kind": "Equivalent To Spouse Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Equivalent To Spouse Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # Only the single parent (ind0) is eligible.
         np.testing.assert_allclose(base, [12000.0, 0.0])
 
     def test_age_amount_phaseout(self):
-        """Age Amount decreases once own income exceeds clawback_start."""
+        """Age Amount decreases once own income exceeds clawback."""
         taxable = np.array([40000.0])  # above the 32943 start
         ctx = PitContext(
             employee_income=taxable,
@@ -174,8 +172,8 @@ class TestCreditBasePool:
             individuals_age=np.array([70]),
         )
         credit_defs = [{
-            "kind": "Age Amount", "amount": 4426.0,
-            "age_min": 65, "clawback_start": 32943.0, "clawback_cap": 62450.0,
+            "credit": "Age Amount", "amount": 4426.0,
+            "age_min": 65, "clawback": 32943.0, "top": 62450.0,
         }]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # 4426 - (40000 - 32943) * 4426/(62450 - 32943)
@@ -193,15 +191,15 @@ class TestCreditBasePool:
             individuals_age=np.array([40, 70]),
         )
         credit_defs = [{
-            "kind": "Age Amount", "amount": 4426.0,
-            "age_min": 65, "clawback_start": 32943.0, "clawback_cap": 62450.0,
+            "credit": "Age Amount", "amount": 4426.0,
+            "age_min": 65, "clawback": 32943.0, "top": 62450.0,
         }]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         expected_70 = 4426.0 - (40000.0 - 32943.0) * 4426.0 / (62450.0 - 32943.0)
         np.testing.assert_allclose(base, [0.0, expected_70], rtol=1e-6)
 
     def test_age_amount_fully_clawed_back_above_cap(self):
-        """Above clawback_cap the Age Amount is fully eliminated."""
+        """Above top the Age Amount is fully eliminated."""
         taxable = np.array([70000.0])  # above the 62450 cap
         ctx = PitContext(
             employee_income=taxable,
@@ -209,8 +207,8 @@ class TestCreditBasePool:
             individuals_age=np.array([70]),
         )
         credit_defs = [{
-            "kind": "Age Amount", "amount": 4426.0,
-            "age_min": 65, "clawback_start": 32943.0, "clawback_cap": 62450.0,
+            "credit": "Age Amount", "amount": 4426.0,
+            "age_min": 65, "clawback": 32943.0, "top": 62450.0,
         }]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_allclose(base, [0.0])
@@ -244,7 +242,7 @@ class TestSpousalAmountGrouping:
         ctx = self._ctx(corr=[0, 1, 0], employee_income=[50000, 30000, 10000])
         taxable = build_taxable_income_pool(ctx)  # [50000, 30000, 10000]
 
-        credit_defs = [{"kind": "Spousal Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Spousal Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
 
         # ind0: max(0, 12000 - spouse(=10000)) = 2000
@@ -271,7 +269,7 @@ class TestSpousalAmountGrouping:
         )
         taxable = build_taxable_income_pool(ctx)  # [50000, 5000, 0, 0]
 
-        credit_defs = [{"kind": "Spousal Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Spousal Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
 
         # Adults are paired: ind0 spouse=5000 → 12000-5000=7000;
@@ -285,7 +283,7 @@ class TestSpousalAmountGrouping:
         ctx = self._ctx(corr=[0, 0], employee_income=[5000, 60000])
         taxable = build_taxable_income_pool(ctx)  # [5000, 60000]
 
-        credit_defs = [{"kind": "Spousal Amount", "amount": 12000.0}]
+        credit_defs = [{"credit": "Spousal Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
 
         # ind0's spouse earns 60000 (> 12000 base) -> credit clawed to 0.
@@ -475,7 +473,7 @@ class TestUnmappedCreditFailClosed:
         )
 
     def test_unknown_kind_contributes_zero(self):
-        credit_defs = [{"kind": "Disability Amount", "amount": 8000.0}]
+        credit_defs = [{"credit": "Disability Amount", "amount": 8000.0}]
         pool = build_credit_base_pool(
             credit_defs, np.array([50000.0, 20000.0]), self._ctx()
         )

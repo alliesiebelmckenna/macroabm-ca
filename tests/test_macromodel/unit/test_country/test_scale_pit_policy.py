@@ -45,13 +45,13 @@ def _pit_config(**overrides) -> CentralGovernmentConfiguration:
         activate_progressive_pit=True,
         pit_brackets=[(37606.0, 0.0506), (75213.0, 0.0770), (float("inf"), 0.1050)],
         pit_tax_credits=[
-            TaxCreditDef(kind="Personal Amount", amount=9869.0),
+            TaxCreditDef(credit="Personal Amount", amount=9869.0),
             TaxCreditDef(
-                kind="Age Amount",
+                credit="Age Amount",
                 amount=4426.0,
                 eligibility_age_min=65,
-                clawback_start=32943.0,
-                clawback_cap=62450.0,
+                clawback=32943.0,
+                top=62450.0,
             ),
         ],
         pit_taxable_income_deductions=500.0,
@@ -74,12 +74,12 @@ class TestScalePitPolicy:
         personal, age = scaled.pit_tax_credits
         assert personal.amount == 9869.0 * SCALE
         assert age.amount == 4426.0 * SCALE
-        assert age.clawback_start == 32943.0 * SCALE
-        assert age.clawback_cap == 62450.0 * SCALE
+        assert age.clawback == 32943.0 * SCALE
+        assert age.top == 62450.0 * SCALE
         # Non-currency fields pass through unchanged.
         assert age.eligibility_age_min == 65
-        assert personal.kind == "Personal Amount"
-        assert personal.indexing is True
+        assert personal.credit == "Personal Amount"
+        assert personal.index is True
 
     def test_deduction_scaled(self):
         scaled = _scale_pit_policy(_pit_config(), SCALE)
@@ -105,7 +105,7 @@ class TestScalePitPolicy:
         _scale_pit_policy(config, SCALE)
         assert config.pit_brackets[0][0] == 37606.0
         assert config.pit_tax_credits[0].amount == 9869.0
-        assert config.pit_tax_credits[1].clawback_start == 32943.0
+        assert config.pit_tax_credits[1].clawback == 32943.0
         assert config.pit_taxable_income_deductions == 500.0
 
     def test_flat_config_passes_through(self):
@@ -147,7 +147,7 @@ class TestUnitDeclarationFailClosed:
             )
 
         scaled = _scaled_tax_credit(
-            ExtendedCredit(kind="Future Credit", amount=100.0), SCALE
+            ExtendedCredit(credit="Future Credit", amount=100.0), SCALE
         )
         assert scaled.supplement == 250.0 * SCALE
         assert scaled.amount == 100.0 * SCALE
@@ -191,7 +191,7 @@ class TestScalingHomogeneity:
         np.testing.assert_allclose(pool_agent, pool_per_person * SCALE)
 
 
-# ── Per-year schedule table: identical conversion for every year ──────────
+# Per-year schedule table: identical conversion for every year
 
 _PIT_HISTORICAL = """tax_year,geo,lower,rate,index
 2014,BC,0,0.0506,1
@@ -228,13 +228,13 @@ class TestScheduleTableScaling:
                 unscaled[year]["pit_tax_credits"], scaled[year]["pit_tax_credits"]
             ):
                 assert converted["amount"] == base["amount"] * SCALE
-                for bound in ("clawback_start", "clawback_cap"):
+                for bound in ("clawback", "top"):
                     if base[bound] is not None:
                         assert converted[bound] == base[bound] * SCALE
                 # Non-currency fields identical.
-                assert converted["kind"] == base["kind"]
+                assert converted["credit"] == base["credit"]
                 assert converted["age_min"] == base["age_min"]
-                assert converted["indexing"] == base["indexing"]
+                assert converted["index"] == base["index"]
 
     def test_projected_years_inherit_agent_units(self, credit_bearing_reader):
         """Projection compounds inflation on top of already-scaled values, so

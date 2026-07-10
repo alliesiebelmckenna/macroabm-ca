@@ -1,22 +1,14 @@
-"""Reader for the Canada/BC-specific tax scalar parameters.
+"""Reader for the Canada/BC-specific scalar tax parameters.
 
-This module loads the scalar tax parameters recorded in
-``tax_parameters.yaml`` and applies them as an override onto a
-:class:`~macromodel.configurations.central_government_configuration.CentralGovernmentConfiguration`.
+This module loads the scalar tax parameters recorded in ``tax_parameters.yaml``
+and applies them as an override onto a ``CentralGovernmentConfiguration``,
+mirroring the ``read_country_conf`` pattern (read a YAML block, apply it via
+``model_copy(update=...)``).
 
-It mirrors the pattern used by ``read_country_conf`` in
-``macro_data.configuration_utils``: read a YAML block and apply it via
-``model_copy(update=...)``.  The configuration class remains the schema and
-validation layer; this reader only supplies jurisdiction- and year-specific
-values from an external, easily editable file.
-
-Scope is *scalars only*.  Progressive bracket schedules, tax-credit amount
-schedules, and dividend gross-up / DTC rate schedules are deliberately
-excluded -- they live in their own CSV files in the taxation directory
-(``raw_data_path / "taxation"``, with ``spoof_data/freda`` as the committed
-fallback) and are read by ``PITSchedule`` / ``TaxCreditSchedule`` /
-``DividendTaxCreditSchedule``.  To enforce that boundary,
-:func:`read_tax_parameters` rejects any schedule field appearing in the YAML.
+Scope is scalars only. Progressive bracket, tax-credit amount, and dividend
+rate schedules live in their own CSV files and are read by ``PITSchedule`` /
+``TaxCreditSchedule`` / ``DividendTaxCreditSchedule``. To enforce that boundary,
+``read_tax_parameters`` rejects any schedule field appearing in the YAML.
 """
 
 from __future__ import annotations
@@ -35,10 +27,8 @@ logger = logging.getLogger(__name__)
 
 _TAX_PARAMS_PATH = Path(__file__).parent / "tax_parameters.yaml"
 
-# (yaml path, jurisdiction, fallback year) combinations already warned about.
-# The per-year schedule table requests every published year and each miss
-# falls back to the same block — one warning per fallback block, not one per
-# requested year.
+# (yaml path, jurisdiction, fallback year) combinations already warned about,
+# so each fallback block warns once rather than once per requested year.
 _FALLBACK_WARNED: set[tuple[str, str, int]] = set()
 
 # Scalar fields on CentralGovernmentConfiguration that this file may override.
@@ -52,10 +42,8 @@ _ALLOWED_FIELDS = frozenset(
     }
 )
 
-# Schedule fields that must NOT appear here -- they are sourced from CSVs in the
-# taxation directory (raw_data_path/"taxation", spoof_data/freda fallback): PIT
-# brackets and credit amounts via PITSchedule / TaxCreditSchedule; dividend
-# gross-up / DTC rates via DividendTaxCreditSchedule.
+# Schedule fields that must NOT appear here; they are sourced from the taxation
+# CSVs, not the scalar YAML.
 _SCHEDULE_FIELDS = frozenset(
     {
         "pit_brackets",
@@ -108,16 +96,9 @@ def read_tax_parameters(
         )
     by_year = data[jurisdiction] or {}
     if year not in by_year:
-        # Fall back to the latest available year not exceeding the request.
-        # The packaged 2014 block is a demonstration default; a real run would
-        # supply the requested year's scalars.  When they are absent, reuse the
-        # latest prior year's assumptions rather than failing -- these are
-        # modelling assumptions (small-business share, rental split, the
-        # integration switch), not inflation-indexed figures, so carrying them
-        # forward is sound.  (Schedules -- brackets, credit amounts, dividend
-        # rates -- are already year-aware via their own per-year CSV rows, so
-        # only these scalars need a fallback.)  A year preceding every available
-        # block stays an error.
+        # Fall back to the latest prior year: these are modelling assumptions,
+        # not indexed figures, so carrying them forward is sound. A year before
+        # every block stays an error.
         prior_years = [y for y in by_year if y <= year]
         if not prior_years:
             raise KeyError(

@@ -199,12 +199,8 @@ class Simulation:
             else None
         )
 
-        # Progressive PIT indexing is intrinsic to the schedule, not an optional
-        # scenario intervention: when any government carries a per-year PIT
-        # schedule table (built in country.py from multi-year taxation data),
-        # register the indexing pre-hook so its brackets/credits advance with the
-        # calendar year by default.  The hook self-gates per government, so it is
-        # harmless where no table is present (flat tax, single-year schedule).
+        # Register the PIT schedule-update pre-hook when any government carries a
+        # per-year PIT schedule table; the hook self-gates per government.
         prehooks: list[Callable] = []
         if any(
             "pit_schedule_by_year" in country.central_government.states
@@ -212,11 +208,11 @@ class Simulation:
         ):
             # Local import avoids a circular dependency (the hook module imports
             # Simulation).
-            from macromodel.utils.prehooks.pit_indexing import (
-                create_pit_indexing_hook,
+            from macromodel.utils.prehooks.pit_schedule_update import (
+                create_pit_schedule_update_hook,
             )
 
-            prehooks.append(create_pit_indexing_hook())
+            prehooks.append(create_pit_schedule_update_hook())
 
         return cls(
             countries=countries,

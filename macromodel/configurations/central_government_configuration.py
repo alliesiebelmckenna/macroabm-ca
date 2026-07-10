@@ -3,20 +3,10 @@ from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, Field
 
-# ── Unit declarations for tax-policy fields ──────────────────────────────
-# Statutory tax parameters are published in per-person dollars, while agent
-# incomes are in agent-level dollars (each synthetic agent represents ``scale``
-# people).  The conversion is applied once, model-side, by reflection over the
-# unit declared in each field's metadata (``json_schema_extra={"unit": ...}``)
-# — see ``country._scale_pit_policy`` — instead of a hand-maintained field
-# list that a new field could silently miss:
-#   "currency"      — a dollar amount; multiplied by the population scale.
-#   "dimensionless" — a rate / share / ratio; never scaled.
-#   "years"         — a calendar year or an age; never scaled.
-# ``monetary_field_names`` enforces the declaration fail-closed: a numeric
-# field with no unit raises, so adding a tax-policy field forces a units
-# decision at definition time.  Structured fields (``pit_brackets``,
-# ``pit_tax_credits``) are exempt here and handled explicitly by the scaler.
+# Unit declarations for tax-policy fields, read by ``country._scale_pit_policy``
+# to scale per-person statutory dollars to agent units. Only "currency" is
+# scaled; "dimensionless" and "years" are not. ``monetary_field_names`` enforces
+# this fail-closed, so a new numeric field must declare its unit.
 CURRENCY = {"unit": "currency"}
 DIMENSIONLESS = {"unit": "dimensionless"}
 YEARS = {"unit": "years"}
@@ -40,18 +30,8 @@ def _is_numeric_annotation(annotation) -> bool:
 def monetary_field_names(model_cls: type[BaseModel]) -> frozenset[str]:
     """Names of *model_cls* fields declared ``unit="currency"``.
 
-    Fail-closed: raises ``TypeError`` for a numeric field that declares no
-    unit, or declares one outside ``_ALLOWED_UNITS`` — a new tax-policy field
-    cannot silently skip agent scaling (the failure mode this convention
-    exists to prevent).  A numeric field added upstream to a shared model will
-    trigger the same error, forcing a conscious unit classification at merge
-    time.
-
-    Args:
-        model_cls: A pydantic model class carrying unit declarations.
-
-    Returns:
-        The frozen set of field names whose values are per-person dollars.
+    Fail-closed: raises ``TypeError`` for a numeric field with no unit, or one
+    outside ``_ALLOWED_UNITS``, so a field cannot silently skip agent scaling.
     """
     monetary: list[str] = []
     for name, field_info in model_cls.model_fields.items():
@@ -79,27 +59,26 @@ def monetary_field_names(model_cls: type[BaseModel]) -> frozenset[str]:
 class TaxCreditDef(BaseModel):
     """A single non-refundable tax credit component with eligibility rules.
 
-    Mirrors the ``TaxCreditComponent`` dataclass from the data layer.  Dollar
-    amounts are per-person; every numeric field must declare its unit (see the
-    unit-declaration block above) so ``country._scale_pit_policy`` converts
-    all currency fields — including ones added later — to agent units.
+    Mirrors the ``TaxCreditComponent`` dataclass from the data layer. Dollar
+    amounts are per-person; every numeric field declares its unit so
+    ``country._scale_pit_policy`` can convert currency fields to agent units.
     """
 
-    kind: str = Field(description="Human-readable credit name (e.g. 'Age Amount').")
+    credit: str = Field(description="Human-readable credit name (e.g. 'Age Amount').")
     amount: float = Field(
         default=0.0, ge=0.0, json_schema_extra=CURRENCY,
         description="Base dollar amount.",
     )
-    indexing: bool = Field(default=True, description="Whether CPI-indexed.")
+    index: bool = Field(default=True, description="Whether statutorily indexed.")
     eligibility_age_min: Optional[int] = Field(
         default=None, json_schema_extra=YEARS,
         description="Minimum age (e.g. 65 for Age Amount).",
     )
-    clawback_start: Optional[float] = Field(
+    clawback: Optional[float] = Field(
         default=None, ge=0.0, json_schema_extra=CURRENCY,
         description="Income at which phaseout begins (own income for Age Amount, spouse for Spousal).",
     )
-    clawback_cap: Optional[float] = Field(
+    top: Optional[float] = Field(
         default=None, ge=0.0, json_schema_extra=CURRENCY,
         description="Income at which credit is fully eliminated.",
     )
@@ -127,59 +106,27 @@ class CentralGovernmentFunctions(BaseModel):
 class CentralGovernmentConfiguration(BaseModel):
     functions: CentralGovernmentFunctions = CentralGovernmentFunctions()
 
-    # Opt-in switch for this government's progressive PIT.  When True AND the
-    # country carries taxation data (``SyntheticCountry.taxation``), the run
-    # builds the progressive schedule (brackets, credits, dividend rates) onto
-    # this config from that data; when False (default) the flat ``Income Tax``
-    # scalar is used (upstream parity).  It is a *per-government* flag, so when
-    # the model gains multiple government agents each opts in independently and
-    # is matched to its own jurisdiction's schedules.
+    # Per-government flag: each government opts in independently.
     activate_progressive_pit: bool = Field(
         default=False,
         description="Opt in to progressive PIT for this government, built from "
         "the country's taxation data. False keeps the flat Income Tax rate.",
     )
 
-    # Progressive Personal Income Tax schedule.
-    # Each tuple is (bracket_upper_bound, marginal_rate).
-    # The last bound should be float("inf") for the top bracket.
-    # When None (default), the flat ``Income Tax`` scalar is used for
-    # both behavioural decisions and government revenue (backward
-    # compatible).  When set, revenue is computed progressively on
-    # employee income while wage-setting and after-tax income
-    # calculations continue to use the scalar ``Income Tax`` effective
-    # rate (which is updated each period to actual / taxable base).
+    # When set, revenue is progressive but wage-setting and after-tax income keep
+    # using the scalar Income Tax rate (refreshed each period to actual / base).
     pit_brackets: Optional[list[tuple[float, float]]] = Field(
         default=None,
-        description="Progressive PIT brackets as (upper_bound, marginal_rate). "
+        description="Progressive PIT brackets as (upper_bound, rate). "
         "None means use the flat Income Tax rate.",
     )
 
-    # Multi-component non-refundable tax credits with per-individual
-    # eligibility rules.  Each component is a ``TaxCreditDef`` with its
-    # own base amount, indexing flag, and eligibility conditions
-    # (e.g. age ≥ 65 for Age Amount).
-    #
-    # At computation time, an individual's eligible credit bases are
-    # summed and multiplied by the bottom bracket marginal rate.  The
-    # resulting credit is subtracted from gross tax, floored at 0.
-    #
-    # When None (default), no post-bracket credits are applied.
     pit_tax_credits: Optional[list[TaxCreditDef]] = Field(
         default=None,
         description="List of non-refundable tax credits with eligibility rules. "
         "None means no credits applied.",
     )
 
-    # Per-individual deduction(s) subtracted from the combined taxable
-    # base (employee + rental + financial income) *before* the
-    # progressive bracket calculation.  Unlike non-refundable tax
-    # (a non-refundable credit), these deductions lower the bracket a
-    # filer falls into and are therefore more powerful.
-    #
-    # Currently a single flat amount per individual.  Extensible to a
-    # list of named deductions (e.g. age, employment, pension) when
-    # individual-level attributes are needed.
     pit_taxable_income_deductions: Optional[float] = Field(
         default=None,
         ge=0.0,
@@ -187,14 +134,6 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Flat per-individual deduction from taxable income before brackets.",
     )
 
-
-    # Fraction of a couple household's rental income assigned to the
-    # higher-earning adult when distributing household-level rental
-    # income to individuals for progressive PIT.  The lower earner
-    # receives (1 - split).  Applies only to couple households
-    # (Type 2 = couple, Type 4 = couple with children).
-    # Non-couple households split rental income equally among adults.
-    # Default 0.5 = equal 50/50 split.
     couple_rental_income_split: float = Field(
         default=0.5,
         ge=0.0,
@@ -203,23 +142,9 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Share of couple rental income to higher earner (0.5 = 50/50).",
     )
 
-    # ── Dividend integration (Canadian gross-up + dividend tax credit) ──
-    # When False (default), dividends keep the legacy at-source flat treatment
-    # in income.py and never enter the PIT schedule (upstream parity).  When
-    # True, both firm-investor and bank-investor dividends are grossed up and
-    # added to taxable income (pool A), and the dividend tax credit is added as
-    # a direct credit (the "2b" term) subtracted from gross PIT alongside the
-    # base credits.
-    #
-    # The grossed-up amount is a tax fiction used only for the income-tax and
-    # credit math; the actual dividend received by the household is unchanged.
-    #
-    # The field defaults below are the 2014 BC values, kept so a bare config is
-    # self-consistent.  In a real run the gross-up and DTC rates are sourced from
-    # the schedule CSV bc_dividend_tax_credit_schedule.csv in the taxation
-    # directory (raw_data_path/"taxation", spoof_data/freda fallback; read by
-    # DividendTaxCreditSchedule) and applied by
-    # build_central_government_configuration; they are not YAML scalars.
+    # Dividend integration (off for parity). The defaults below are 2014 BC
+    # values; a real run sources the rates from the dividend schedule CSV via
+    # build_central_government_configuration, not the YAML.
     pit_dividend_integration: bool = Field(
         default=False,
         description="Enable Canadian dividend gross-up + dividend tax credit for firm and bank dividends.",

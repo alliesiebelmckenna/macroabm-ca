@@ -1,7 +1,7 @@
 """Tests for ``_build_pit_schedule_by_year`` — the per-year PIT schedule table.
 
 The table is assembled in ``country.py`` from a multi-year taxation schedule and
-stashed on the central-government agent; the ``pit_indexing`` pre-hook then reads
+stashed on the central-government agent; the ``pit_schedule_update`` pre-hook then reads
 it to advance brackets/credits as the calendar year progresses.  These tests
 drive the builder with a small two-year reader (a rate change between years) and
 pin: opt-in / data-presence gating, one entry per published year, the per-year

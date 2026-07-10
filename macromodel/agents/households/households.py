@@ -536,11 +536,10 @@ class Households(Agent):
     ) -> np.ndarray:
         """A household's income-receiving members: the adults (age >= 18).
 
-        Matches the adult definition used by ``pit_pools._household_context``
-        so the whole PIT pipeline selects the same people.  Conserving
-        fallbacks: when ages are unavailable, or a household has no member of
-        age (a data anomaly), all members receive — household income is never
-        dropped.
+        Matches the adult definition used by ``pit_pools._household_context`` so
+        the whole PIT pipeline selects the same people. When ages are unavailable
+        or a household has no adult member, all members receive, so household
+        income is never dropped.
         """
         if individuals_age is None:
             return inds_in_hh
