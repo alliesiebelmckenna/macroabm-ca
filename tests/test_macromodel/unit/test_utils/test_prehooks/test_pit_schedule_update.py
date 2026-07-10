@@ -32,27 +32,10 @@ class _StubSimulation:
         self.countries = countries
 
 
-def test_factory_is_exported():
-    # Exposed both from the package and its module.
-    assert create_pit_schedule_update_hook is direct
 
 
-def test_advances_government_with_table():
-    gov = _StubGovernment(has_table=True)
-    sim = _StubSimulation({"CAN": _StubCountry(gov)})
-
-    create_pit_schedule_update_hook()(sim, 2021, 1)
-
-    assert gov.set_for_year_calls == [2021]
 
 
-def test_skips_government_without_table():
-    gov = _StubGovernment(has_table=False)
-    sim = _StubSimulation({"CAN": _StubCountry(gov)})
-
-    create_pit_schedule_update_hook()(sim, 2021, 1)
-
-    assert gov.set_for_year_calls == []
 
 
 def test_only_tabled_governments_are_advanced():

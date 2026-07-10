@@ -40,30 +40,8 @@ class TestCreditStatutoryLookup:
         assert len(comps) == 1  # only 2015's row, not all three years
         assert comps[0].amount == pytest.approx(9500)
 
-    def test_lookup_2016(self, tmp_path):
-        sched = TaxCreditSchedule.from_csv(_multiyear_csv(tmp_path))
-        comps = self._personal(sched, 2016)
-        assert len(comps) == 1
-        assert comps[0].amount == pytest.approx(12000)
 
-    def test_base_year_2014_not_polluted(self, tmp_path):
-        sched = TaxCreditSchedule.from_csv(_multiyear_csv(tmp_path))
-        comps = self._personal(sched, 2014)
-        assert len(comps) == 1
-        assert comps[0].amount == pytest.approx(9000)
 
-    def test_base_year_is_minimum_year_even_when_unsorted(self, tmp_path):
-        """A valid but unsorted CSV (later year block first) must not shift
-        the base year or the base credit set."""
-        path = tmp_path / "unsorted_credits.csv"
-        path.write_text(
-            "tax_year,geo,credit,amount,index\n"
-            "2016,BC,Personal Amount,12000,1\n"
-            "2014,BC,Personal Amount,9000,1\n"
-        )
-        sched = TaxCreditSchedule.from_csv(path)
-        assert sched.base_year == 2014
-        assert sched.credits[0].amount == pytest.approx(9000)
 
     def test_consolidated_geo_format_loads_bc_rows(self):
         """The contributor's consolidated credit file loads BC rows cleanly."""

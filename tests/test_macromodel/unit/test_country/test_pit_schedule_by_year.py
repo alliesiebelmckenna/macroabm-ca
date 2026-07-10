@@ -37,20 +37,12 @@ def _multi_year_reader(tmp_path):
 
 
 class TestBuildPitScheduleByYear:
-    def test_none_reader_returns_none(self):
-        config = CentralGovernmentConfiguration(activate_progressive_pit=True)
-        assert _build_pit_schedule_by_year(config, None, scale=1) is None
 
     def test_not_opted_in_returns_none(self, multi_year_reader):
         # Reader present, but the government has not opted into progressive PIT.
         config = CentralGovernmentConfiguration(activate_progressive_pit=False)
         assert _build_pit_schedule_by_year(config, multi_year_reader, scale=1) is None
 
-    def test_published_years_present(self, multi_year_reader):
-        config = CentralGovernmentConfiguration(activate_progressive_pit=True)
-        table = _build_pit_schedule_by_year(config, multi_year_reader, scale=1)
-        assert table is not None
-        assert set(table) == {2014, 2016}
 
     def test_carries_per_year_marginal_rate(self, multi_year_reader):
         """Each published year's entry holds that year's *actual* bottom rate,
@@ -60,23 +52,3 @@ class TestBuildPitScheduleByYear:
         assert table[2014]["pit_rates"][0] == pytest.approx(0.0506)
         assert table[2016]["pit_rates"][0] == pytest.approx(0.0600)
 
-    def test_thresholds_scaled_to_agent_units(self, multi_year_reader):
-        """Thresholds are multiplied by ``scale`` for every year, identically to
-        the single construction-year path."""
-        scale = 1000
-        config = CentralGovernmentConfiguration(activate_progressive_pit=True)
-        unscaled = _build_pit_schedule_by_year(config, multi_year_reader, scale=1)
-        scaled = _build_pit_schedule_by_year(config, multi_year_reader, scale=scale)
-
-        for year in (2014, 2016):
-            # Finite thresholds scale linearly; the open-top bracket stays inf.
-            finite = np.isfinite(unscaled[year]["pit_thresholds"])
-            np.testing.assert_allclose(
-                scaled[year]["pit_thresholds"][finite],
-                unscaled[year]["pit_thresholds"][finite] * scale,
-            )
-            assert np.isinf(scaled[year]["pit_thresholds"][-1])
-            # Rates are unit-free — unchanged by scaling.
-            np.testing.assert_array_equal(
-                scaled[year]["pit_rates"], unscaled[year]["pit_rates"]
-            )

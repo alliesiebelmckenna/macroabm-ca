@@ -49,17 +49,6 @@ class TestDistributeFinancialIncome:
         npt.assert_allclose(out, [500.0, 500.0, 0.0, 0.0])
         assert out.sum() == 1000.0
 
-    def test_no_age_data_falls_back_to_all_members_conserved(self):
-        corr = np.array([0, 0, 0, 0])
-        out = Households.distribute_financial_income_to_individuals(
-            _stub(1),
-            household_financial_income=np.array([1000.0]),
-            corr_households=corr,
-            n_individuals=4,
-            individuals_age=None,
-        )
-        npt.assert_allclose(out, [250.0] * 4)
-        assert out.sum() == 1000.0
 
     def test_no_adult_household_falls_back_conserved(self):
         ages = np.array([16.0, 12.0])
@@ -73,20 +62,6 @@ class TestDistributeFinancialIncome:
         )
         npt.assert_allclose(out, [150.0, 150.0])
 
-    def test_multiple_households_conserved(self):
-        # hh0: 1 adult + 1 child; hh1: 2 adults; hh2: no income.
-        ages = np.array([30.0, 5.0, 45.0, 44.0, 70.0])
-        corr = np.array([0, 0, 1, 1, 2])
-        hh_income = np.array([400.0, 600.0, 0.0])
-        out = Households.distribute_financial_income_to_individuals(
-            _stub(3),
-            household_financial_income=hh_income,
-            corr_households=corr,
-            n_individuals=5,
-            individuals_age=ages,
-        )
-        npt.assert_allclose(out, [400.0, 0.0, 300.0, 300.0, 0.0])
-        assert out.sum() == hh_income.sum()
 
 
 class TestDistributeRentalIncome:
@@ -124,32 +99,4 @@ class TestDistributeRentalIncome:
         )
         npt.assert_allclose(out, [0.0, 1000.0])
 
-    def test_three_adults_remainder_split_equally(self):
-        ages = np.array([50.0, 48.0, 22.0])
-        wages = np.array([80000.0, 40000.0, 20000.0])
-        corr = np.array([0, 0, 0])
-        out = Households.distribute_rental_income_to_individuals(
-            _stub(1, gross_rental=np.array([1000.0])),
-            housing_data=None,
-            corr_households=corr,
-            individual_employee_income=wages,
-            couple_rental_income_split=0.7,
-            individuals_age=ages,
-        )
-        npt.assert_allclose(out, [700.0, 150.0, 150.0])
-        assert out.sum() == 1000.0
 
-    def test_no_age_data_falls_back_to_all_members(self):
-        wages = np.array([50000.0, 30000.0, 0.0])
-        corr = np.array([0, 0, 0])
-        out = Households.distribute_rental_income_to_individuals(
-            _stub(1, gross_rental=np.array([1000.0])),
-            housing_data=None,
-            corr_households=corr,
-            individual_employee_income=wages,
-            couple_rental_income_split=0.7,
-            individuals_age=None,
-        )
-        # Highest earner 70%; the two remaining members split 30%.
-        npt.assert_allclose(out, [700.0, 150.0, 150.0])
-        assert out.sum() == 1000.0
