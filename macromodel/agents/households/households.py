@@ -530,32 +530,55 @@ class Households(Agent):
         gross = self.compute_gross_rental_income(housing_data)
         return (1 - income_taxes) * gross
 
+    @staticmethod
+    def _adult_members(
+        inds_in_hh: np.ndarray, individuals_age: np.ndarray | None
+    ) -> np.ndarray:
+        """A household's income-receiving members: the adults (age >= 18).
+
+        Matches the adult definition used by ``pit_pools._household_context``
+        so the whole PIT pipeline selects the same people.  Conserving
+        fallbacks: when ages are unavailable, or a household has no member of
+        age (a data anomaly), all members receive — household income is never
+        dropped.
+        """
+        if individuals_age is None:
+            return inds_in_hh
+        adults = inds_in_hh[np.asarray(individuals_age)[inds_in_hh] >= 18]
+        return adults if len(adults) > 0 else inds_in_hh
+
     def distribute_rental_income_to_individuals(
         self,
         housing_data: pd.DataFrame,
         corr_households: np.ndarray,
         individual_employee_income: np.ndarray,
         couple_rental_income_split: float,
+        individuals_age: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Distribute household gross rental income to constituent individuals.
+        """Distribute household gross rental income to the household's adults.
 
-        Splitting rules:
-        - Single-adult households: 100% of rental income to the sole adult.
+        Splitting rules (adults = members aged >= 18; children receive
+        nothing):
+        - Single-adult households: 100% of rental income to that adult.
         - Multi-adult households: the highest-earning adult receives
           ``couple_rental_income_split`` of the household rental income,
           the remaining adults split the rest equally.
+        - Without age data (``individuals_age=None``), or when a household has
+          no adult member, all members receive — the household total is always
+          conserved.
 
         Args:
             housing_data (pd.DataFrame): Property market data
             corr_households (np.ndarray): Individual→household mapping
             individual_employee_income (np.ndarray): Wage income per individual
             couple_rental_income_split (float): Fraction to highest earner
+            individuals_age (Optional[np.ndarray]): Age per individual, used to
+                restrict recipients to adults
 
         Returns:
             np.ndarray: Gross rental income per individual
         """
         gross_rental = self.compute_gross_rental_income(housing_data)
-        n_adults = self.states["Number of Adults"]
         n_individuals = len(corr_households)
 
         rental_per_ind = np.zeros(n_individuals)
@@ -569,14 +592,14 @@ class Households(Agent):
             if len(inds_in_hh) == 0:
                 continue
 
-            n_adu = n_adults[hh_id]
-            if n_adu <= 1 or len(inds_in_hh) == 1:
-                # Single adult: all rental income to the sole individual
-                rental_per_ind[inds_in_hh[0]] += hh_rental
+            recipients = self._adult_members(inds_in_hh, individuals_age)
+            if len(recipients) == 1:
+                # Single adult: all rental income to that adult
+                rental_per_ind[recipients[0]] += hh_rental
             else:
-                # Multi-adult: split by income rank
-                per_ind_income = individual_employee_income[inds_in_hh]
-                sorted_inds = inds_in_hh[np.argsort(per_ind_income)][::-1]  # descending
+                # Multi-adult: split by income rank among the adults
+                per_ind_income = individual_employee_income[recipients]
+                sorted_inds = recipients[np.argsort(per_ind_income)][::-1]  # descending
 
                 # Highest earner gets couple_rental_income_split fraction
                 high_earner = sorted_inds[0]
@@ -584,10 +607,8 @@ class Households(Agent):
 
                 # Remaining adults split the rest equally
                 remaining_adults = sorted_inds[1:]
-                n_remaining = len(remaining_adults)
-                if n_remaining > 0:
-                    remainder = (1.0 - couple_rental_income_split) * hh_rental
-                    rental_per_ind[remaining_adults] += remainder / n_remaining
+                remainder = (1.0 - couple_rental_income_split) * hh_rental
+                rental_per_ind[remaining_adults] += remainder / len(remaining_adults)
 
         return rental_per_ind
 
@@ -596,20 +617,27 @@ class Households(Agent):
         household_financial_income: np.ndarray,
         corr_households: np.ndarray,
         n_individuals: int,
+        individuals_age: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Distribute household financial asset income to constituent individuals.
+        """Distribute household financial asset income to the household's adults.
 
-        Splits equally among adults in each household.
+        Splits equally among the household's adult members (age >= 18);
+        children receive nothing.  The divisor is the count of receiving
+        members, so the distributed total always equals the household total
+        (conservation holds structurally).  Without age data
+        (``individuals_age=None``), or when a household has no adult member,
+        the equal split falls back to all members — again conserving.
 
         Args:
             household_financial_income (np.ndarray): Financial income per household
             corr_households (np.ndarray): Individual→household mapping
             n_individuals (int): Total number of individuals
+            individuals_age (Optional[np.ndarray]): Age per individual, used to
+                restrict recipients to adults
 
         Returns:
             np.ndarray: Financial asset income per individual
         """
-        n_adults = self.states["Number of Adults"]
         fin_income_per_ind = np.zeros(n_individuals)
 
         for hh_id in range(self.ts.current("n_households")):
@@ -617,8 +645,10 @@ class Households(Agent):
             if hh_fin_inc <= 0:
                 continue
             inds_in_hh = np.where(corr_households == hh_id)[0]
-            n_adu = max(n_adults[hh_id], 1)
-            fin_income_per_ind[inds_in_hh] += hh_fin_inc / n_adu
+            if len(inds_in_hh) == 0:
+                continue
+            recipients = self._adult_members(inds_in_hh, individuals_age)
+            fin_income_per_ind[recipients] += hh_fin_inc / len(recipients)
 
         return fin_income_per_ind
 

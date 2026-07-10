@@ -1,6 +1,7 @@
 """Tests for the BC/Canada tax scalar-parameter reader and config builder."""
 
 import functools
+import logging
 import math
 from pathlib import Path
 
@@ -405,3 +406,27 @@ class TestActivateTaxation:
         )
         with pytest.raises(KeyError):
             activate_taxation(base, mismatched, tax_year=2014)
+
+
+class TestFallbackWarnOnce:
+    def test_fallback_warns_once_per_block(self, tmp_path, caplog):
+        """The per-year schedule table requests every published year past the
+        last scalar block; the fallback warning fires once per (file,
+        jurisdiction, block), not once per requested year."""
+        yaml_file = tmp_path / "params.yaml"
+        yaml_file.write_text(
+            "bc:\n  2014:\n    couple_rental_income_split: 0.5\n"
+        )
+        with caplog.at_level(
+            logging.WARNING,
+            logger="macromodel.configurations.tax_parameters.tax_parameters_reader",
+        ):
+            first = read_tax_parameters("bc", 2015, path=yaml_file)
+            second = read_tax_parameters("bc", 2016, path=yaml_file)
+
+        # Both requests still resolve to the fallback block.
+        assert first == second == {"couple_rental_income_split": 0.5}
+        fallback_records = [
+            r for r in caplog.records if "falling back" in r.getMessage()
+        ]
+        assert len(fallback_records) == 1

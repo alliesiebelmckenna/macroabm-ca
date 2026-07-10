@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 _TAX_PARAMS_PATH = Path(__file__).parent / "tax_parameters.yaml"
 
+# (yaml path, jurisdiction, fallback year) combinations already warned about.
+# The per-year schedule table requests every published year and each miss
+# falls back to the same block — one warning per fallback block, not one per
+# requested year.
+_FALLBACK_WARNED: set[tuple[str, str, int]] = set()
+
 # Scalar fields on CentralGovernmentConfiguration that this file may override.
 _ALLOWED_FIELDS = frozenset(
     {
@@ -119,14 +125,18 @@ def read_tax_parameters(
                 f"'{jurisdiction}' in {yaml_path.name}. Available: {sorted(by_year)}"
             )
         fallback_year = max(prior_years)
-        logger.warning(
-            "Tax-parameter scalars for %s %d not found in %s; falling back to "
-            "the latest available year %d.",
-            jurisdiction,
-            year,
-            yaml_path.name,
-            fallback_year,
-        )
+        warn_key = (str(yaml_path), jurisdiction, fallback_year)
+        if warn_key not in _FALLBACK_WARNED:
+            _FALLBACK_WARNED.add(warn_key)
+            logger.warning(
+                "Tax-parameter scalars for %s %d not found in %s; falling back "
+                "to the latest available year %d (logged once per fallback "
+                "block; later requests reuse it silently).",
+                jurisdiction,
+                year,
+                yaml_path.name,
+                fallback_year,
+            )
         year = fallback_year
 
     overrides = by_year[year] or {}

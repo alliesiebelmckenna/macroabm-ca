@@ -57,7 +57,11 @@ from macromodel.agents.government_entities.government_entities import Government
 from macromodel.agents.households.households import Households
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.agents.individuals.individuals import Individuals
-from macromodel.configurations import CountryConfiguration, activate_taxation
+from macromodel.configurations import CountryConfiguration, TaxCreditDef, activate_taxation
+from macromodel.configurations.central_government_configuration import (
+    CentralGovernmentConfiguration,
+    monetary_field_names,
+)
 from macromodel.economy.economy import Economy
 from macromodel.exchange_rates import ExchangeRates
 from macromodel.exogenous.exogenous import Exogenous
@@ -66,6 +70,86 @@ from macromodel.markets.housing_market.housing_market import HousingMarket
 from macromodel.markets.labour_market.labour_market import LabourMarket
 from macromodel.rest_of_the_world import RestOfTheWorld
 from macromodel.util.get_histogram import get_histogram
+
+
+def _scaled_tax_credit(credit: TaxCreditDef, scale: int) -> TaxCreditDef:
+    """Return a copy of *credit* with every currency field in agent units.
+
+    Reflection-driven: scales exactly the fields declared ``unit="currency"``
+    on the credit's class (see the unit-declaration block in
+    ``central_government_configuration``), so a currency field added to
+    ``TaxCreditDef`` later is scaled automatically, and an undeclared numeric
+    field raises rather than silently skipping the conversion.  Non-currency
+    fields (``eligibility_age_min``, ``indexing``, ``kind``) pass through
+    unchanged.
+    """
+    updates = {
+        name: getattr(credit, name) * scale
+        for name in monetary_field_names(type(credit))
+        if getattr(credit, name) is not None
+    }
+    return credit.model_copy(update=updates)
+
+
+def _scale_pit_policy(
+    config: CentralGovernmentConfiguration, scale: int
+) -> CentralGovernmentConfiguration:
+    """Return a copy of *config* with every PIT policy dollar in agent units.
+
+    Statutory tax parameters are published in per-person dollars; agent incomes
+    are agent-level dollars (each synthetic agent represents ``scale`` people).
+    This helper is the single seam where that conversion happens — both the
+    construction-year configuration and every per-year schedule entry
+    (``_build_pit_schedule_by_year``) pass through it, so the two paths cannot
+    diverge.  It converts:
+
+      * bracket thresholds (rates are unit-free; the open-top ``inf`` stays
+        infinite under multiplication),
+      * every ``TaxCreditDef`` field declared ``unit="currency"`` — amounts and
+        clawback bounds today, and any currency field added later
+        (:func:`_scaled_tax_credit`),
+      * every configuration field declared ``unit="currency"``
+        (``pit_taxable_income_deductions`` today), by the same reflection.
+
+    Income streams need no counterpart conversion: everything entering
+    ``PitContext`` is already in agent dollars (scaled at the data layer or
+    derived from agent-level aggregates), so once the policy dollars match,
+    bracket and clawback comparisons are dimensionally consistent for any
+    current or future stream.
+
+    ``scale <= 1`` is an identity (per-person units already agree with agent
+    units).  The caller-owned *config* is never mutated — a scaled copy is
+    returned — so repeated Country construction or calibration loops do not
+    compound the scaling.
+
+    Args:
+        config: The government configuration in per-person dollar units.
+        scale: Population scaling factor (people per synthetic agent).
+
+    Returns:
+        A configuration in agent dollar units (or *config* itself when no
+        conversion is needed).
+    """
+    if scale <= 1:
+        return config
+
+    updates: dict = {}
+    if config.pit_brackets is not None:
+        updates["pit_brackets"] = [
+            (threshold * scale, rate) for threshold, rate in config.pit_brackets
+        ]
+    if config.pit_tax_credits is not None:
+        updates["pit_tax_credits"] = [
+            _scaled_tax_credit(credit, scale) for credit in config.pit_tax_credits
+        ]
+    for name in monetary_field_names(type(config)):
+        value = getattr(config, name)
+        if value is not None:
+            updates[name] = value * scale
+
+    if not updates:
+        return config
+    return config.model_copy(update=updates)
 
 
 def _build_pit_schedule_by_year(
@@ -78,8 +162,8 @@ def _build_pit_schedule_by_year(
     Returns a ``{tax_year: state_fragment}`` table where each fragment holds the
     ``pit_thresholds`` / ``pit_rates`` / ``pit_tax_credits`` /
     ``pit_taxable_income_deductions`` for that statutory year — pre-scaled to
-    agent units exactly as the single construction-year schedule is (see the
-    bracket-scaling block in ``from_pickled_country``).  The
+    agent units exactly as the single construction-year schedule is (both paths
+    go through :func:`_scale_pit_policy`).  The
     :meth:`CentralGovernment.set_pit_for_year` lookup later swaps the matching
     fragment into the agent's ``states`` as the simulation's calendar year
     advances.
@@ -122,10 +206,11 @@ def _build_pit_schedule_by_year(
         if config_year.pit_brackets is None:
             continue
 
-        brackets = config_year.pit_brackets
-        if scale > 1:
-            brackets = [(threshold * scale, rate) for threshold, rate in brackets]
-        brackets_array = np.array(brackets, dtype=float)
+        # Same agent-unit conversion as the construction path: brackets,
+        # credit currency fields, and the deduction all pass through the one
+        # shared scaling seam.
+        config_year = _scale_pit_policy(config_year, scale)
+        brackets_array = np.array(config_year.pit_brackets, dtype=float)
 
         fragment: dict = {
             "pit_thresholds": brackets_array[:, 0],
@@ -419,19 +504,15 @@ class Country:
             tax_year=initial_year,
         )
 
-        # Scale PIT bracket thresholds to agent-level income units.
-        # Each synthetic agent represents *scale* real people, so a
-        # $50k bracket for individuals becomes $50k × scale for agents.
-        # Scale a *copy* of the central-government config — never mutate the
-        # caller-owned configuration, which may be reused across repeated
-        # Country construction or calibration loops (otherwise the brackets
-        # would be multiplied again on every reuse).
-        if central_government_config.pit_brackets is not None and scale > 1:
-            central_government_config = deepcopy(central_government_config)
-            central_government_config.pit_brackets = [
-                (threshold * scale, rate)
-                for threshold, rate in central_government_config.pit_brackets
-            ]
+        # Scale the PIT policy dollars to agent-level income units.
+        # Each synthetic agent represents *scale* real people, so a $50k
+        # bracket for individuals becomes $50k × scale for agents — and the
+        # same conversion applies to credit amounts, clawback bounds, and the
+        # taxable-income deduction, which are compared against (or subtracted
+        # from) agent-scale incomes.  _scale_pit_policy returns a scaled copy;
+        # the caller-owned configuration is never mutated, so repeated Country
+        # construction or calibration loops do not compound the scaling.
+        central_government_config = _scale_pit_policy(central_government_config, scale)
 
         central_government = CentralGovernment.from_pickled_agent(
             synthetic_central_government=synthetic_country.central_government,
@@ -1534,20 +1615,22 @@ class Country:
         # income + credit base).  Adding a new income stream or tax credit
         # means editing pit_pools.py and this block — the central
         # government's tax core (compute_pit) stays fixed.
+        ind_ages = self.individuals.states.get("Age")
+        ind_corr_hh = self.individuals.states.get("Corresponding Household ID")
+
         rental_income_per_individual = self.households.distribute_rental_income_to_individuals(
             housing_data=self.housing_market.states["properties"],
             corr_households=self.individuals.states["Corresponding Household ID"],
             individual_employee_income=self.individuals.ts.current("employee_income"),
             couple_rental_income_split=self.central_government.states["couple_rental_income_split"],
+            individuals_age=ind_ages,
         )
         financial_income_per_individual = self.households.distribute_financial_income_to_individuals(
             household_financial_income=self.households.ts.current("income_financial_assets"),
             corr_households=self.individuals.states["Corresponding Household ID"],
             n_individuals=len(self.individuals.states["Corresponding Household ID"]),
+            individuals_age=ind_ages,
         )
-
-        ind_ages = self.individuals.states.get("Age")
-        ind_corr_hh = self.individuals.states.get("Corresponding Household ID")
 
         # Dividend integration (off by default → both arrays stay None,
         # the pool and credits are unchanged, full upstream parity).  When on,

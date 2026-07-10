@@ -459,3 +459,20 @@ class TestStatutoryLookup:
         assert len(lower_bounds) == 2
         assert np.allclose(lower_bounds, [0.0, 40000.0])
         assert np.allclose(rates, [0.05, 0.10])
+
+    def test_base_year_is_minimum_year_even_when_unsorted(self, tmp_path):
+        """A valid but unsorted CSV (later year block first) must not shift
+        the base year — it is the minimum year, not the first row's."""
+        path = tmp_path / "unsorted.csv"
+        path.write_text(
+            "tax_year,geo,lower,rate,index\n"
+            "2016,BC,0,0.06,1\n"
+            "2016,BC,42000,0.11,1\n"
+            "2014,BC,0,0.05,1\n"
+            "2014,BC,40000,0.10,1\n"
+        )
+        sched = PITSchedule.from_csv(path)
+        assert sched.base_year == 2014
+        # The pre-base-year validation keys off the true base year.
+        _, rates, _, _ = sched.get_brackets(tax_year=2014)
+        assert np.allclose(rates, [0.05, 0.10])

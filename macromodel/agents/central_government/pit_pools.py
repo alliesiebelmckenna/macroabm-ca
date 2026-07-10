@@ -27,9 +27,22 @@ To add a tax credit kind:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Credit kinds granted to every individual with no eligibility test.  The
+# fail-closed dispatch in ``_credit_amount`` consults this allow-list instead
+# of treating "no dedicated branch" as universal — an unmapped credit must
+# contribute zero, never silently go to everyone (see the deferred-credit
+# skip in ``central_government_builder``; this is the runtime's own guard).
+_UNIVERSAL_CREDIT_KINDS = frozenset({"Personal Amount"})
+
+# Unmapped credit kinds already warned about (warn once, not once per step).
+_UNMAPPED_KINDS_WARNED: set[str] = set()
 
 
 @dataclass
@@ -39,6 +52,14 @@ class PitContext:
     All income-stream fields are per individual.  Household / demographic
     fields drive tax-credit eligibility and may be ``None`` when the
     relevant data is unavailable (e.g. employee-only pre-calibration).
+
+    Units invariant: every monetary field is in **agent-level dollars** (each
+    synthetic agent represents ``scale`` people; incomes are scaled at the
+    data layer or derived from agent-level aggregates).  The policy dollars
+    the pools are compared against — brackets, credit amounts, clawback
+    bounds, deductions — are converted to the same units at construction
+    (``country._scale_pit_policy``).  A new income stream added here must
+    arrive in agent dollars; it then needs no scaling work of its own.
     """
 
     # ── income streams (per individual) ──
@@ -280,6 +301,12 @@ def _credit_amount(
     or child counts).  Because :class:`PitContext` allows those fields to
     be ``None``, a credit whose required context is missing returns **zero**
     — it must never silently fall through to a universal amount.
+
+    Fail-closed dispatch: only kinds with a dedicated branch, an ``age_min``
+    gate, or membership in ``_UNIVERSAL_CREDIT_KINDS`` contribute.  Any other
+    kind contributes zero (with a one-time warning) — a genuinely universal
+    new credit is activated by adding its kind to the allow-list, not by
+    falling through.
     """
     kind = tc["kind"]
     amount = tc["amount"]
@@ -324,5 +351,20 @@ def _credit_amount(
             return zeros
         return np.where(ages >= age_min, amount, 0.0)
 
-    # ── Universal credit (e.g. Personal Amount) ──
-    return np.full(n_ind, float(amount))
+    # ── Universal credits (explicit allow-list, e.g. Personal Amount) ──
+    if kind in _UNIVERSAL_CREDIT_KINDS:
+        return np.full(n_ind, float(amount))
+
+    # ── Unknown kind: fail closed ──
+    # No dedicated branch, no age gate, not on the universal allow-list —
+    # contribute zero rather than silently granting the amount to everyone.
+    if kind not in _UNMAPPED_KINDS_WARNED:
+        _UNMAPPED_KINDS_WARNED.add(kind)
+        logger.warning(
+            "Tax credit kind '%s' has no runtime branch in _credit_amount; "
+            "contributing zero (fail-closed). Add a branch (or, for a "
+            "genuinely universal credit, add the kind to "
+            "_UNIVERSAL_CREDIT_KINDS) to activate it.",
+            kind,
+        )
+    return zeros

@@ -791,10 +791,12 @@ def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationRea
 
     Additive and optional, like the energy-sector readers: a run without a
     ``taxation/`` tree simply does not get taxation (progressive PIT is not
-    activated downstream), and that common case is silent.  When a ``taxation/``
-    directory *does* exist but its personal-income-tax schedules are missing, the
-    absence is treated as a misconfiguration and a :class:`TaxationDataWarning`
-    is emitted before returning ``None``.
+    activated downstream), and that common case is silent.  Partial data is a
+    misconfiguration and is handled uniformly — whether the
+    ``personal_income_tax/`` subdirectory is missing or the subdirectory exists
+    but the bracket schedule CSV does not, a :class:`TaxationDataWarning` is
+    emitted and ``None`` is returned, so the run falls back to the flat-tax
+    setup instead of aborting.
 
     Jurisdiction is BC-only at this seam: the reader is built with
     ``TaxationReader.from_dir``'s default (``jurisdiction="bc"``), matching the
@@ -826,7 +828,20 @@ def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationRea
         )
         return None
 
-    return TaxationReader.from_dir(pit_dir)
+    try:
+        return TaxationReader.from_dir(pit_dir)
+    except FileNotFoundError as error:
+        # Same misconfiguration one level down: the subdirectory exists but a
+        # required schedule file does not.  Warn and fall back to the flat-tax
+        # setup, identically to the missing-subdirectory case above.
+        warnings.warn(
+            f"A taxation schedule directory exists at {pit_dir} but a required "
+            f"schedule file is missing; taxation is disabled (progressive PIT "
+            f"will not activate). Underlying error: {error}",
+            TaxationDataWarning,
+            stacklevel=2,
+        )
+        return None
 
 
 def prune_icio_dict(icio_dict: dict[int, Any], prune_date: date):

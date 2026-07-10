@@ -306,18 +306,21 @@ class CentralGovernment(Agent):
         current_ind_employee_income: np.ndarray,
         current_total_rent_paid: float,
         current_income_financial_assets: np.ndarray,
+        current_ind_activity: np.ndarray | None = None,
+        current_ind_realised_cons: np.ndarray | None = None,
+        current_bank_profits: np.ndarray | None = None,
+        current_firm_production: np.ndarray | None = None,
+        current_firm_price: np.ndarray | None = None,
+        current_firm_profits: np.ndarray | None = None,
+        current_firm_industries: np.ndarray | None = None,
+        current_household_new_real_wealth: np.ndarray | None = None,
+        taxes_less_subsidies_rates: np.ndarray | None = None,
+        current_total_exports: float = 0.0,
+        # New (Canadian tax layer) parameters are appended AFTER every upstream
+        # parameter, so a positional caller of the original signature still
+        # binds correctly.
         current_ind_rental_income: np.ndarray | None = None,
         current_ind_financial_income: np.ndarray | None = None,
-        current_ind_activity: np.ndarray = None,
-        current_ind_realised_cons: np.ndarray = None,
-        current_bank_profits: np.ndarray = None,
-        current_firm_production: np.ndarray = None,
-        current_firm_price: np.ndarray = None,
-        current_firm_profits: np.ndarray = None,
-        current_firm_industries: np.ndarray = None,
-        current_household_new_real_wealth: np.ndarray = None,
-        taxes_less_subsidies_rates: np.ndarray = None,
-        current_total_exports: float = 0.0,
         individuals_age: np.ndarray | None = None,
         individuals_corr_households: np.ndarray | None = None,
         households_type: np.ndarray | None = None,
@@ -347,11 +350,6 @@ class CentralGovernment(Agent):
             current_ind_employee_income (np.ndarray): Employee incomes per individual
             current_total_rent_paid (float): Total rent paid by renters (scalar)
             current_income_financial_assets (np.ndarray): Financial income per household
-            current_ind_rental_income (Optional[np.ndarray]): Gross rental income per individual.
-                Used only to assemble the taxable pool in the direct-call fallback (when
-                ``taxable_income_per_ind`` is not supplied); ignored when the pools are passed.
-            current_ind_financial_income (Optional[np.ndarray]): Financial income per individual.
-                Fallback-only, same as ``current_ind_rental_income``.
             current_ind_activity (np.ndarray): Individual activity status
             current_ind_realised_cons (np.ndarray): Consumption levels
             current_bank_profits (np.ndarray): Bank profits
@@ -362,6 +360,11 @@ class CentralGovernment(Agent):
             current_household_new_real_wealth (np.ndarray): New wealth
             taxes_less_subsidies_rates (np.ndarray): Net tax rates
             current_total_exports (float): Total exports
+            current_ind_rental_income (Optional[np.ndarray]): Gross rental income per individual.
+                Used only to assemble the taxable pool in the direct-call fallback (when
+                ``taxable_income_per_ind`` is not supplied); ignored when the pools are passed.
+            current_ind_financial_income (Optional[np.ndarray]): Financial income per individual.
+                Fallback-only, same as ``current_ind_rental_income``.
             individuals_age (Optional[np.ndarray]): Age per individual
             individuals_corr_households (Optional[np.ndarray]): Household ID per individual
             households_type (Optional[np.ndarray]): HouseholdType enum per household

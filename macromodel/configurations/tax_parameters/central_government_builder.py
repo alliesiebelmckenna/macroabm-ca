@@ -37,11 +37,14 @@ builder leaves integration off and firm dividends keep the legacy treatment.
 Schedule presence overrides the ``pit_dividend_integration`` switch in
 ``tax_parameters.yaml``; that YAML value governs only when no schedule is found.
 
-Bracket units
--------------
-``pit_brackets`` are returned in *per-individual* dollar units.  The scale to
-agent-level units (each synthetic agent represents ``scale`` people) is applied
-later in ``Country.from_pickled_country``; the builder must not pre-scale.
+Monetary units
+--------------
+``pit_brackets``, credit amounts and clawback bounds, and
+``pit_taxable_income_deductions`` are returned in *per-individual* dollar
+units.  The conversion to agent-level units (each synthetic agent represents
+``scale`` people) is applied later, model-side, by
+``country._scale_pit_policy`` — driven by the ``unit`` declarations on the
+configuration fields — and the builder must not pre-scale.
 
 Tax-credit coverage
 -------------------

@@ -460,3 +460,30 @@ class TestPoolsFeedPolicyOnce:
         # Pooling stacks the second stream into the higher bracket, so it
         # is taxed more than taxing each stream from the bottom bracket.
         assert tax_pooled > tax_separate
+
+
+class TestUnmappedCreditFailClosed:
+    """A credit kind with no runtime branch must contribute zero — never fall
+    through to a universal grant (defence in depth behind the builder's
+    expressibility filter)."""
+
+    def _ctx(self):
+        return PitContext(
+            employee_income=np.array([100.0, 200.0]),
+            employee_si_rate=0.0,
+            individuals_age=np.array([70.0, 40.0]),
+        )
+
+    def test_unknown_kind_contributes_zero(self):
+        credit_defs = [{"kind": "Disability Amount", "amount": 8000.0}]
+        pool = build_credit_base_pool(
+            credit_defs, np.array([50000.0, 20000.0]), self._ctx()
+        )
+        np.testing.assert_array_equal(pool, [0.0, 0.0])
+
+    def test_personal_amount_remains_universal(self):
+        credit_defs = [{"kind": "Personal Amount", "amount": 9869.0}]
+        pool = build_credit_base_pool(
+            credit_defs, np.array([50000.0, 20000.0]), self._ctx()
+        )
+        np.testing.assert_allclose(pool, [9869.0, 9869.0])

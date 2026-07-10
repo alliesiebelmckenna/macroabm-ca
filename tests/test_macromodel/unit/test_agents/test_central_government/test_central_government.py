@@ -91,6 +91,54 @@ class TestCentralGovernmentPIT:
             f"Effective rate {rate:.4f} should be between 5% and 17%"
         )
 
+    def test_compute_taxes_accepts_upstream_positional_prefix(
+        self, test_central_government_pit
+    ):
+        """The pre-existing (upstream) parameters keep their positional order;
+        the Canadian-tax parameters are appended after them.  A positional
+        caller of the original signature must bind correctly and produce the
+        same revenue as the keyword call."""
+        cg = test_central_government_pit
+        emp_income = np.array([30000.0, 100000.0])
+        activity = np.array([ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED])
+
+        cg.compute_taxes(
+            emp_income,              # current_ind_employee_income
+            0.0,                     # current_total_rent_paid
+            np.zeros(2),             # current_income_financial_assets
+            activity,                # current_ind_activity
+            np.zeros(2),             # current_ind_realised_cons
+            np.zeros(1),             # current_bank_profits
+            np.zeros(1),             # current_firm_production
+            np.ones(1),              # current_firm_price
+            np.zeros(1),             # current_firm_profits
+            np.zeros(1, dtype=int),  # current_firm_industries
+            np.zeros(1),             # current_household_new_real_wealth
+            np.zeros(1),             # taxes_less_subsidies_rates
+            0.0,                     # current_total_exports
+        )
+        positional_tax = cg.ts.get_aggregate("taxes_income")[-1]
+
+        cg.compute_taxes(
+            current_ind_employee_income=emp_income,
+            current_total_rent_paid=0.0,
+            current_income_financial_assets=np.zeros(2),
+            current_ind_activity=activity,
+            current_ind_realised_cons=np.zeros(2),
+            current_bank_profits=np.zeros(1),
+            current_firm_production=np.zeros(1),
+            current_firm_price=np.ones(1),
+            current_firm_profits=np.zeros(1),
+            current_firm_industries=np.zeros(1, dtype=int),
+            current_household_new_real_wealth=np.zeros(1),
+            taxes_less_subsidies_rates=np.zeros(1),
+            current_total_exports=0.0,
+        )
+        keyword_tax = cg.ts.get_aggregate("taxes_income")[-1]
+
+        assert positional_tax > 0
+        assert positional_tax == pytest.approx(keyword_tax)
+
     def test_compute_taxes_effective_rate_update(self, test_central_government_pit):
         """After compute_taxes, the effective Income Tax rate is
         consistent with the progressive schedule."""
