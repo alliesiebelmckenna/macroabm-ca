@@ -126,7 +126,7 @@ class TestCountry:
         # Attach BC taxation data to a *copy* of the synthetic country (leave the
         # shared fixture untouched).
         synthetic_country = dataclasses.replace(
-            base, taxation=TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+            base, taxation=TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
         )
 
         country_configuration = CountryConfiguration(
@@ -175,7 +175,7 @@ class TestCountry:
         progressive PIT (flat parity preserved)."""
         base = datawrapper.synthetic_countries["FRA"]
         synthetic_country = dataclasses.replace(
-            base, taxation=TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+            base, taxation=TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
         )
         country_configuration = CountryConfiguration()  # activate_progressive_pit=False
 
@@ -223,7 +223,7 @@ class TestCountry:
             "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
             "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
         )
-        reader = TaxationReader.from_dir(tmp_path)
+        reader = TaxationReader.from_dir(tmp_path, jurisdiction="bc")
 
         base = datawrapper.synthetic_countries["FRA"]
         scale = base.scale

@@ -21,9 +21,58 @@ from macro_data.readers.taxation.personal_income_tax.dividend_tax_credit_schedul
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
 
 
-# Consolidated schedule filenames; jurisdictions live in the geo column.
-_RATES_THRESHOLDS_FILENAME = "rates_thresholds.csv"
-_DIVIDEND_FILENAME = "dividend_tax_credit_schedule.csv"
+# Default schedule filenames; jurisdictions live in the geo column. They are
+# defaults, not requirements: point SchedulePaths at any files with this schema.
+RATES_THRESHOLDS_FILENAME = "rates_thresholds.csv"
+TAX_CREDITS_FILENAME = "non_refundable_tax_credits.csv"
+DIVIDEND_FILENAME = "dividend_tax_credit_schedule.csv"
+
+
+@dataclass(frozen=True)
+class SchedulePaths:
+    """Which files the taxation schedules are read from.
+
+    The reader is not tied to particular filenames — only to the consolidated,
+    geo-keyed schema. Pointing it at a different set of files is how a run
+    chooses its tax data: a bracket file covering only BC activates progressive
+    PIT for BC alone, and one covering every province activates them all. The
+    jurisdictions are whatever the ``geo`` column contains.
+
+    Attributes:
+        rates: Bracket schedule (required — it defines the covered jurisdictions).
+        credits: Non-refundable credit schedule, or ``None`` to apply no credits.
+        dividend: Dividend gross-up / DTC schedule, or ``None`` for no dividend
+            path.
+    """
+
+    rates: Path
+    credits: Optional[Path] = None
+    dividend: Optional[Path] = None
+
+    @classmethod
+    def in_dir(
+        cls,
+        schedule_dir: Path,
+        *,
+        rates: str = RATES_THRESHOLDS_FILENAME,
+        credits: str = TAX_CREDITS_FILENAME,
+        dividend: str = DIVIDEND_FILENAME,
+    ) -> "SchedulePaths":
+        """Resolve the schedule files inside *schedule_dir* by filename.
+
+        The filenames default to the canonical set; override them to read an
+        alternative data source (e.g. a comprehensive all-province file kept
+        under a different name). A credit or dividend file that does not exist is
+        simply absent — that component is skipped, not an error.
+        """
+        schedule_dir = Path(schedule_dir)
+        credits_path = schedule_dir / credits
+        dividend_path = schedule_dir / dividend
+        return cls(
+            rates=schedule_dir / rates,
+            credits=credits_path if credits_path.exists() else None,
+            dividend=dividend_path if dividend_path.exists() else None,
+        )
 
 
 @dataclass
@@ -43,50 +92,57 @@ class TaxationReader:
 
     pit_schedule: PITSchedule
     dividend_schedule: Optional[DividendTaxCreditSchedule]
-    jurisdiction: str = "bc"
+    jurisdiction: str
+
+    @classmethod
+    def from_paths(
+        cls,
+        paths: SchedulePaths,
+        *,
+        jurisdiction: str,
+    ) -> "TaxationReader":
+        """Load *jurisdiction*'s schedules from the files named by *paths*.
+
+        Args:
+            paths: The schedule files to read.
+            jurisdiction: Jurisdiction key — selects the geo rows read from each
+                consolidated file.
+
+        Returns:
+            A ``TaxationReader`` with the bracket schedule (and its credits when
+            the jurisdiction appears in the credit file) and the dividend
+            schedule when the jurisdiction appears in the dividend file.
+        """
+        pit_schedule = PITSchedule.from_csv(paths.rates, jurisdiction=jurisdiction)
+        pit_schedule.load_tax_credits(paths.credits, jurisdiction=jurisdiction)
+
+        dividend_schedule: Optional[DividendTaxCreditSchedule] = None
+        if paths.dividend is not None:
+            try:
+                dividend_schedule = DividendTaxCreditSchedule.from_csv(
+                    paths.dividend, jurisdiction=jurisdiction
+                )
+            except ValueError:
+                # The file carries no rows for this jurisdiction: it taxes
+                # dividends at the ordinary rates, with no gross-up / DTC path.
+                # A normal state for a jurisdiction whose dividend rates are not
+                # yet sourced, not an error.
+                dividend_schedule = None
+
+        return cls(
+            pit_schedule=pit_schedule,
+            dividend_schedule=dividend_schedule,
+            jurisdiction=jurisdiction,
+        )
 
     @classmethod
     def from_dir(
         cls,
         schedule_dir: Path,
         *,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "TaxationReader":
-        """Load the schedules for *jurisdiction* from *schedule_dir*.
-
-        Args:
-            schedule_dir: Directory holding the consolidated schedule CSVs —
-                typically ``raw_data_path / "taxation" / "personal_income_tax"``.
-            jurisdiction: Jurisdiction key — selects the geo rows read from the
-                consolidated bracket, credit, and dividend files.
-
-        Returns:
-            A ``TaxationReader`` with the bracket schedule (and its companion
-            credits) loaded, and the dividend schedule loaded when present.
-        """
-        schedule_dir = Path(schedule_dir)
-
-        # Geo-filtered bracket schedule; the companion credit CSV is
-        # auto-discovered by PITSchedule.
-        pit_schedule = PITSchedule.from_name(
-            _RATES_THRESHOLDS_FILENAME,
-            schedule_dir=schedule_dir,
-            jurisdiction=jurisdiction,
-        )
-
-        try:
-            dividend_schedule: Optional[DividendTaxCreditSchedule] = (
-                DividendTaxCreditSchedule.from_name(
-                    _DIVIDEND_FILENAME,
-                    schedule_dir=schedule_dir,
-                    jurisdiction=jurisdiction,
-                )
-            )
-        except FileNotFoundError:
-            dividend_schedule = None
-
-        return cls(
-            pit_schedule=pit_schedule,
-            dividend_schedule=dividend_schedule,
-            jurisdiction=jurisdiction,
+        """Load *jurisdiction*'s schedules from the canonical files in *schedule_dir*."""
+        return cls.from_paths(
+            SchedulePaths.in_dir(schedule_dir), jurisdiction=jurisdiction
         )

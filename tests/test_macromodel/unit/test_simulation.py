@@ -824,7 +824,7 @@ def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
         "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
         "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
     )
-    reader = TaxationReader.from_dir(tmp_path)
+    reader = TaxationReader.from_dir(tmp_path, jurisdiction="bc")
 
     base_country = datawrapper.synthetic_countries["FRA"]
     scale = base_country.scale

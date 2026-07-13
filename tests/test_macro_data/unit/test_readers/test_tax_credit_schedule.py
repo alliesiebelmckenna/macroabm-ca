@@ -35,7 +35,7 @@ class TestCreditStatutoryLookup:
         ]
 
     def test_lookup_2015(self, tmp_path):
-        sched = TaxCreditSchedule.from_csv(_multiyear_csv(tmp_path))
+        sched = TaxCreditSchedule.from_csv(_multiyear_csv(tmp_path), jurisdiction="bc")
         comps = self._personal(sched, 2015)
         assert len(comps) == 1  # only 2015's row, not all three years
         assert comps[0].amount == pytest.approx(9500)

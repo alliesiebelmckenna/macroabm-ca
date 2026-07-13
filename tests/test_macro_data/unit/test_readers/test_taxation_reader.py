@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from macro_data.readers.default_readers import DataPaths, _load_taxation_reader
-from macro_data.readers.taxation import TaxationDataWarning, TaxationReader
+from macro_data.readers.taxation import TaxationDataWarning, TaxationReader, TaxationStore
 
 # Committed schedules.
 #   parents[0]=test_readers [1]=unit [2]=test_macro_data [3]=tests [4]=repo root
@@ -45,13 +45,13 @@ def _make_taxation_tree(root: Path, *, with_schedules: bool) -> Path:
 
 class TestTaxationReader:
     def test_from_dir_loads_schedules(self):
-        reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+        reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
         assert reader.pit_schedule.base_year == 2014
         assert reader.pit_schedule.tax_credits is not None
         assert reader.dividend_schedule is not None
 
     def test_from_dir_prefers_consolidated_geo_format(self):
-        reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+        reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
         _, rates, lower_bounds, _ = reader.pit_schedule.get_brackets(2015)
         assert np.allclose(lower_bounds, [0, 37869, 75740, 86958, 105592, 151050])
         assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
@@ -65,7 +65,7 @@ class TestTaxationReader:
             "non_refundable_tax_credits.csv",
         ):
             shutil.copy(_COMMITTED_PIT_DIR / name, tmp_path)
-        reader = TaxationReader.from_dir(tmp_path)
+        reader = TaxationReader.from_dir(tmp_path, jurisdiction="bc")
         assert reader.dividend_schedule is None
 
 
@@ -88,9 +88,15 @@ class TestLoadTaxationReader:
         with pytest.warns(TaxationDataWarning, match="personal-income-tax schedules"):
             assert _load_taxation_reader(taxation) is None
 
-    def test_populated_taxation_dir_loads_reader(self, tmp_path):
+    def test_populated_taxation_dir_loads_store(self, tmp_path):
+        # The seam yields the STORE (every jurisdiction in the data); a country's
+        # own schedules are the per-country slice taken at construction time.
         taxation = _make_taxation_tree(tmp_path, with_schedules=True)
-        reader = _load_taxation_reader(taxation)
+        store = _load_taxation_reader(taxation)
+        assert isinstance(store, TaxationStore)
+        assert "bc" in store.jurisdictions
+
+        reader = store.for_country("CAN_BC")
         assert isinstance(reader, TaxationReader)
         assert reader.pit_schedule.base_year == 2014
         assert reader.dividend_schedule is not None
@@ -112,12 +118,15 @@ class TestDataPathsTaxationWiring:
         datapaths = DataPaths.default_paths(tmp_path, icio_years=[])
         assert datapaths.taxation_path == tmp_path / "taxation"
 
-    def test_default_paths_taxation_path_loads_reader(self, tmp_path):
+    def test_default_paths_taxation_path_loads_store(self, tmp_path):
         # Lay a populated taxation tree under a raw-data root, then drive the
         # exact path resolution ``from_raw_data`` performs.
         _make_taxation_tree(tmp_path, with_schedules=True)
         datapaths = DataPaths.default_paths(tmp_path, icio_years=[])
-        reader = _load_taxation_reader(datapaths.taxation_path)
+        store = _load_taxation_reader(datapaths.taxation_path)
+        assert isinstance(store, TaxationStore)
+
+        reader = store.for_country("CAN_BC")
         assert isinstance(reader, TaxationReader)
         assert reader.pit_schedule.base_year == 2014
         assert reader.dividend_schedule is not None

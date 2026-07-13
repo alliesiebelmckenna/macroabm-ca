@@ -153,7 +153,9 @@ class TestPITSchedule:
 
     def test_from_name_loads_bc_2014(self):
         """The consolidated file loads BC 2014 with 6 brackets."""
-        schedule = PITSchedule.from_name("rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR)
+        schedule = PITSchedule.from_name(
+            "rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR, jurisdiction="bc"
+        )
         assert schedule.base_year == 2014
         thresholds, rates, lower_bounds, quick_adds = schedule.get_brackets(
             tax_year=2014
@@ -180,6 +182,7 @@ class TestPITSchedule:
         schedule = PITSchedule.from_name(
             "rates_thresholds.csv",
             schedule_dir=BC_SCHEDULE_DIR,
+            jurisdiction="bc",
         )
         # The consolidated fixture publishes 2014-2030, so a far-future year is
         # out of table and raises.
@@ -199,7 +202,7 @@ class TestPITSchedule:
             with pytest.raises(
                 ValueError, match="missing required columns"
             ):
-                PITSchedule.from_csv(p)
+                PITSchedule.from_csv(p, jurisdiction="bc")
         finally:
             Path(p).unlink(missing_ok=True)
 
@@ -238,7 +241,7 @@ class TestStatutoryLookup:
     def test_lookup_captures_statutory_rate_change(self, tmp_path):
         """2016's bottom/top rates (0.06/0.11) differ from 2014's (0.05/0.10);
         compounding can't produce them — only a per-year lookup can."""
-        sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path))
+        sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path), jurisdiction="bc")
         _, rates, lower_bounds, _ = sched.get_brackets(tax_year=2016)
         assert np.allclose(lower_bounds, [0.0, 42000.0])
         assert np.allclose(rates, [0.06, 0.11])

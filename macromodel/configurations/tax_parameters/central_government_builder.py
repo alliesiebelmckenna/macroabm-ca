@@ -119,8 +119,8 @@ def activate_taxation(
 
 
 def build_central_government_configuration(
-    taxation_reader: Optional["TaxationReader"] = None,
-    jurisdiction: str = "bc",
+    taxation_reader: "TaxationReader",
+    jurisdiction: str,
     tax_year: int = 2014,
     params_path: str | Path | None = None,
     base_config: Optional[CentralGovernmentConfiguration] = None,

@@ -31,7 +31,7 @@ _COMMITTED_PIT_DIR = (
 @functools.lru_cache(maxsize=1)
 def _committed_reader() -> TaxationReader:
     """Load the committed BC schedules once (shared, read-only across tests)."""
-    return TaxationReader.from_dir(_COMMITTED_PIT_DIR)
+    return TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
 
 
 def _build(jurisdiction: str = "bc", tax_year: int = 2014, **kwargs):
@@ -186,7 +186,7 @@ class TestDeferredCreditSafety:
             "tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index\n"
             f"2014,BC,{kind},{amount},,0.0506,,,1\n"
         )
-        return TaxCreditSchedule.from_csv(csv).credits[0]
+        return TaxCreditSchedule.from_csv(csv, jurisdiction="bc").credits[0]
 
 
     def test_unknown_kind_dropped_by_builder(self, tmp_path):

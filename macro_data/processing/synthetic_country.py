@@ -112,7 +112,24 @@ from macro_data.readers.emission_fraction.emission_fraction_reader import Emissi
 from macro_data.readers.emissions.emissions_reader import CH4EmissionsDataCAN, EmissionsData
 from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPrices
 from macro_data.readers.exogenous_data import ExogenousCountryData
-from macro_data.readers.taxation import TaxationReader
+from macro_data.readers.taxation import TaxationReader, TaxationStore
+
+
+def taxation_for_country(
+    country: "Country | Region | str",
+    taxation: Optional[TaxationStore],
+) -> Optional[TaxationReader]:
+    """Return *country*'s own tax schedules, or ``None`` when the data omits it.
+
+    The per-country slice of the taxation data layer, mirroring the other
+    country-keyed readers: the store carries every jurisdiction and the country
+    selects its own (``CAN_BC`` -> ``bc``). A country the data does not cover
+    falls back to the flat Income Tax rate, so each province is taxed by its own
+    schedule and never by another's.
+    """
+    if taxation is None:
+        return None
+    return taxation.for_country(country)
 
 
 @dataclass
@@ -382,7 +399,7 @@ class SyntheticCountry:
             firm_exo_prices=(
                 SectorExoPrices.from_reader(readers.exo_prices) if readers.exo_prices is not None else None
             ),
-            taxation=readers.taxation,
+            taxation=taxation_for_country(country, readers.taxation),
         )
 
     @classmethod
@@ -599,6 +616,7 @@ class SyntheticCountry:
             firm_exo_prices=(
                 SectorExoPrices.from_reader(readers.exo_prices) if readers.exo_prices is not None else None
             ),
+            taxation=taxation_for_country(country, readers.taxation),
         )
 
     @classmethod

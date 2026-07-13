@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 _TAX_PARAMS_PATH = Path(__file__).parent / "tax_parameters.yaml"
 
+# Block supplying the scalars every jurisdiction starts from; a jurisdiction's
+# own block overrides it field by field.
+_DEFAULT_KEY = "default"
+
 # (yaml path, jurisdiction, fallback year) combinations already warned about,
 # so each fallback block warns once rather than once per requested year.
 _FALLBACK_WARNED: set[tuple[str, str, int]] = set()
@@ -56,8 +60,52 @@ _SCHEDULE_FIELDS = frozenset(
 )
 
 
+def _select_year(
+    by_year: dict[int, Any],
+    year: int,
+    jurisdiction: str,
+    yaml_path: Path,
+    *,
+    required: bool,
+) -> dict[str, Any]:
+    """Return *jurisdiction*'s scalars for *year*, falling back to the latest prior year.
+
+    These are modelling assumptions, not indexed figures, so carrying the most
+    recent block forward is sound. An empty result means the block has nothing to
+    say for this year — the caller decides whether that is an error.
+    """
+    if not by_year:
+        return {}
+    if year in by_year:
+        return dict(by_year[year] or {})
+
+    prior_years = [y for y in by_year if y <= year]
+    if not prior_years:
+        if required:
+            raise KeyError(
+                f"Year {year} precedes all available years for jurisdiction "
+                f"'{jurisdiction}' in {yaml_path.name}. Available: {sorted(by_year)}"
+            )
+        return {}
+
+    fallback_year = max(prior_years)
+    warn_key = (str(yaml_path), jurisdiction, fallback_year)
+    if warn_key not in _FALLBACK_WARNED:
+        _FALLBACK_WARNED.add(warn_key)
+        logger.warning(
+            "Tax-parameter scalars for %s %d not found in %s; falling back "
+            "to the latest available year %d (logged once per fallback "
+            "block; later requests reuse it silently).",
+            jurisdiction,
+            year,
+            yaml_path.name,
+            fallback_year,
+        )
+    return dict(by_year[fallback_year] or {})
+
+
 def read_tax_parameters(
-    jurisdiction: str = "bc",
+    jurisdiction: str,
     year: int = 2014,
     path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -89,38 +137,42 @@ def read_tax_parameters(
     with open(yaml_path, "r") as file:
         data = yaml.safe_load(file) or {}
 
-    if jurisdiction not in data:
+    # A bare `on:` key is a YAML boolean, so Ontario's block would parse as True
+    # and be silently unreachable — the jurisdiction would inherit the defaults
+    # and any tuning of it would be quietly ignored. Fail loudly instead.
+    non_string_keys = [k for k in data if not isinstance(k, str)]
+    if non_string_keys:
+        raise ValueError(
+            f"Non-string jurisdiction key(s) {non_string_keys} in {yaml_path.name}. "
+            "A bare `on`, `no`, `yes` or `off` is parsed as a YAML boolean; quote "
+            'the key (e.g. `"on":`) so it stays a jurisdiction.'
+        )
+
+    if jurisdiction not in data and _DEFAULT_KEY not in data:
         raise KeyError(
-            f"Jurisdiction '{jurisdiction}' not found in {yaml_path.name}. "
+            f"Jurisdiction '{jurisdiction}' not found in {yaml_path.name}, and no "
+            f"'{_DEFAULT_KEY}' block is present to fall back to. "
             f"Available: {sorted(data)}"
         )
-    by_year = data[jurisdiction] or {}
-    if year not in by_year:
-        # Fall back to the latest prior year: these are modelling assumptions,
-        # not indexed figures, so carrying them forward is sound. A year before
-        # every block stays an error.
-        prior_years = [y for y in by_year if y <= year]
-        if not prior_years:
-            raise KeyError(
-                f"Year {year} precedes all available years for jurisdiction "
-                f"'{jurisdiction}' in {yaml_path.name}. Available: {sorted(by_year)}"
-            )
-        fallback_year = max(prior_years)
-        warn_key = (str(yaml_path), jurisdiction, fallback_year)
-        if warn_key not in _FALLBACK_WARNED:
-            _FALLBACK_WARNED.add(warn_key)
-            logger.warning(
-                "Tax-parameter scalars for %s %d not found in %s; falling back "
-                "to the latest available year %d (logged once per fallback "
-                "block; later requests reuse it silently).",
-                jurisdiction,
-                year,
-                yaml_path.name,
-                fallback_year,
-            )
-        year = fallback_year
 
-    overrides = by_year[year] or {}
+    # The default block supplies every scalar; a jurisdiction's own block
+    # overrides it field by field. A jurisdiction listed with no values (or not
+    # listed at all) therefore inherits the defaults, which is what lets a new
+    # province run before anyone has tuned its assumptions.
+    base = _select_year(
+        data.get(_DEFAULT_KEY) or {}, year, _DEFAULT_KEY, yaml_path, required=False
+    )
+    own = _select_year(
+        data.get(jurisdiction) or {}, year, jurisdiction, yaml_path, required=False
+    )
+
+    if not base and not own:
+        raise KeyError(
+            f"Year {year} precedes all available years for jurisdiction "
+            f"'{jurisdiction}' and for '{_DEFAULT_KEY}' in {yaml_path.name}."
+        )
+
+    overrides = {**base, **own}
 
     schedule_keys = _SCHEDULE_FIELDS.intersection(overrides)
     if schedule_keys:
@@ -143,7 +195,7 @@ def read_tax_parameters(
 
 def apply_tax_parameters(
     configuration: CentralGovernmentConfiguration,
-    jurisdiction: str = "bc",
+    jurisdiction: str,
     year: int = 2014,
     path: str | Path | None = None,
 ) -> CentralGovernmentConfiguration:

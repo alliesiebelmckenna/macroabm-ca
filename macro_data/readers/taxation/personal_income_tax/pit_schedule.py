@@ -128,7 +128,7 @@ class PITSchedule:
     def from_csv(
         cls,
         path: str | Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "PITSchedule":
         """Load bracket definitions from a CSV file.
 
@@ -173,7 +173,7 @@ class PITSchedule:
         cls,
         filename: str,
         schedule_dir: Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "PITSchedule":
         """Load a schedule by filename from *schedule_dir*.
 
@@ -191,28 +191,43 @@ class PITSchedule:
                 f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
         schedule = cls.from_csv(path, jurisdiction=jurisdiction)
-        schedule._load_companion_tax_credits(path, jurisdiction=jurisdiction)
+        # Companion credit file, by convention, alongside the bracket file.
+        schedule.load_tax_credits(
+            path.parent / "non_refundable_tax_credits.csv", jurisdiction=jurisdiction
+        )
         return schedule
 
-    def _load_companion_tax_credits(
+    def load_tax_credits(
         self,
-        bracket_path: Path,
-        jurisdiction: str = "bc",
+        credits_path: Optional[Path],
+        jurisdiction: str,
     ) -> None:
-        """Load the companion ``non_refundable_tax_credits.csv`` when present.
+        """Attach *jurisdiction*'s non-refundable credits from *credits_path*.
 
-        The credit file is optional — when not found the model applies no tax
-        credits (none configured).
+        Both the file and any single jurisdiction's presence within it are
+        optional: a jurisdiction that publishes brackets but no non-refundable
+        credits is a normal state, not an error. Either way the model applies no
+        tax credits for it.
         """
-        candidate = bracket_path.parent / "non_refundable_tax_credits.csv"
-        if not candidate.exists():
-            logger.debug("No companion tax-credit file found (%s)", candidate)
+        if credits_path is None or not Path(credits_path).exists():
+            logger.debug("No tax-credit file supplied (%s)", credits_path)
+            self._tax_credits = None
             return
 
-        logger.info("Loading companion tax-credit file: %s", candidate.name)
-        self._tax_credits = TaxCreditSchedule.from_csv(
-            candidate, jurisdiction=jurisdiction
-        )
+        credits_path = Path(credits_path)
+        logger.info("Loading tax-credit file: %s", credits_path.name)
+        try:
+            self._tax_credits = TaxCreditSchedule.from_csv(
+                credits_path, jurisdiction=jurisdiction
+            )
+        except ValueError:
+            # The file exists but carries no rows for this jurisdiction.
+            logger.debug(
+                "Tax-credit file %s has no rows for %s; no credits applied.",
+                credits_path.name,
+                jurisdiction,
+            )
+            self._tax_credits = None
 
     @property
     def base_year(self) -> int:

@@ -60,7 +60,7 @@ class DividendTaxCreditSchedule:
     def from_csv(
         cls,
         path: str | Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "DividendTaxCreditSchedule":
         """Load the dividend-rate schedule from a CSV file.
 
@@ -110,7 +110,7 @@ class DividendTaxCreditSchedule:
         cls,
         filename: str,
         schedule_dir: Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "DividendTaxCreditSchedule":
         """Load the schedule by filename from *schedule_dir*.
 

@@ -33,7 +33,7 @@ _PIT_HISTORICAL = """tax_year,geo,lower,rate,index
 @pytest.fixture(name="multi_year_reader")
 def _multi_year_reader(tmp_path):
     (tmp_path / "rates_thresholds.csv").write_text(_PIT_HISTORICAL)
-    return TaxationReader.from_dir(tmp_path)
+    return TaxationReader.from_dir(tmp_path, jurisdiction="bc")
 
 
 class TestBuildPitScheduleByYear:

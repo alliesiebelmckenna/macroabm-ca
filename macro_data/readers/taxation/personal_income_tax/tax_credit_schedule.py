@@ -103,7 +103,7 @@ class TaxCreditSchedule:
     def from_csv(
         cls,
         path: str | Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "TaxCreditSchedule":
         """Load tax credit definitions from a CSV file.
 
@@ -200,7 +200,7 @@ class TaxCreditSchedule:
         cls,
         filename: str,
         schedule_dir: Path,
-        jurisdiction: str = "bc",
+        jurisdiction: str,
     ) -> "TaxCreditSchedule":
         """Load by filename from *schedule_dir*.
 

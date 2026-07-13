@@ -127,6 +127,6 @@ _TAX_CREDITS = """tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,ind
 def _credit_bearing_reader(tmp_path):
     (tmp_path / "rates_thresholds.csv").write_text(_PIT_HISTORICAL)
     (tmp_path / "non_refundable_tax_credits.csv").write_text(_TAX_CREDITS)
-    return TaxationReader.from_dir(tmp_path)
+    return TaxationReader.from_dir(tmp_path, jurisdiction="bc")
 
 

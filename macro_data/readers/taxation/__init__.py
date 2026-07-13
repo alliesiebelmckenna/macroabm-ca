@@ -9,6 +9,25 @@ class TaxationDataWarning(Warning):
     pass
 
 
-from macro_data.readers.taxation.taxation_reader import TaxationReader  # noqa: E402
+from macro_data.readers.taxation.taxation_reader import (  # noqa: E402
+    DIVIDEND_FILENAME,
+    RATES_THRESHOLDS_FILENAME,
+    TAX_CREDITS_FILENAME,
+    SchedulePaths,
+    TaxationReader,
+)
+from macro_data.readers.taxation.taxation_store import (  # noqa: E402
+    TaxationStore,
+    jurisdiction_of,
+)
 
-__all__ = ["TaxationDataWarning", "TaxationReader"]
+__all__ = [
+    "DIVIDEND_FILENAME",
+    "RATES_THRESHOLDS_FILENAME",
+    "TAX_CREDITS_FILENAME",
+    "SchedulePaths",
+    "TaxationDataWarning",
+    "TaxationReader",
+    "TaxationStore",
+    "jurisdiction_of",
+]

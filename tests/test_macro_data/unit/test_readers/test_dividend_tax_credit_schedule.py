@@ -78,7 +78,7 @@ class TestFromCsv:
         p = _write_csv(csv)
         try:
             with pytest.raises(ValueError, match="missing required columns"):
-                DividendTaxCreditSchedule.from_csv(p)
+                DividendTaxCreditSchedule.from_csv(p, jurisdiction="bc")
         finally:
             Path(p).unlink(missing_ok=True)
 

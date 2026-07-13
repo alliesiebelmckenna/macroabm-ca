@@ -135,6 +135,7 @@ class DataWrapper:
         raw_data_path: Path | str,
         single_hfcs_survey: bool = True,
         single_icio_survey: bool = True,
+        taxation_filenames: Optional[dict[str, str]] = None,
     ) -> "DataWrapper":
         """
         Create a DataWrapper instance from a configuration.
@@ -211,6 +212,7 @@ class DataWrapper:
             use_disagg_can_2014_reader=configuration.can_disaggregation,
             use_provincial_can_reader=use_provincial_can_reader,
             regions_dict=regions_dict,
+            taxation_filenames=taxation_filenames,
         )
 
         if regions_dict:

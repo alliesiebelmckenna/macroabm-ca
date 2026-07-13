@@ -19,7 +19,7 @@ Key features:
 
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple
@@ -43,7 +43,7 @@ from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
 from macro_data.readers.emissions.emissions_reader import CH4EmissionsReaderCAN, EmissionsReader
 from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPricesReader
-from macro_data.readers.taxation import TaxationDataWarning, TaxationReader
+from macro_data.readers.taxation import TaxationDataWarning, TaxationStore
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
     get_investment_fractions,
@@ -121,9 +121,21 @@ class DataPaths:
     # Taxation schedule directory (optional); when absent, progressive PIT stays
     # inactive. Loaded by from_raw_data via _load_taxation_reader.
     taxation_path: Optional[Path] = None
+    # Which schedule files to read inside taxation_path / "personal_income_tax".
+    # Defaults to the canonical filenames; override to read an alternative data
+    # source in the same schema. The jurisdictions covered by the bracket file
+    # are the governments that can run a progressive PIT — so pointing this at a
+    # BC-only file taxes BC progressively and leaves every other province flat,
+    # and pointing it at an all-province file activates them all. No code change.
+    taxation_filenames: dict[str, str] = dataclass_field(default_factory=dict)
 
     @classmethod
-    def default_paths(cls, raw_data_path: Path, icio_years: Iterable[int]):
+    def default_paths(
+        cls,
+        raw_data_path: Path,
+        icio_years: Iterable[int],
+        taxation_filenames: Optional[dict[str, str]] = None,
+    ):
         """Create default paths for all data sources.
 
         Args:
@@ -154,6 +166,7 @@ class DataPaths:
             compustat_banks_path=raw_data_path / "compustat" / "banks.csv",
             emissions_path=raw_data_path / "emissions",
             taxation_path=raw_data_path / "taxation",
+            taxation_filenames=dict(taxation_filenames or {}),
             emissions_fraction_path=raw_data_path / "emission_factors",
             firm_prices_path=raw_data_path / "cims_prices" / "firm_prices.csv",
             ch4_emissions_path=raw_data_path
@@ -194,7 +207,8 @@ class DataReaders:
         compustat_banks (CompustatBanksReader): Compustat banks data reader
         emissions (EmissionsReader): Emissions data reader
         emission_fractions (Optional[EmissionsFractionReader]): Emission fraction data reader
-        taxation (Optional[TaxationReader]): Personal-income-tax schedule reader;
+        taxation (Optional[TaxationStore]): Personal-income-tax schedules for every
+            jurisdiction in the data; sliced per country at construction time.
             ``None`` when no taxation data is present (progressive PIT off)
         regions_dict (Optional[dict[Country, list[Region]]]): Regional disaggregation mapping
     """
@@ -217,7 +231,7 @@ class DataReaders:
     emission_fractions: Optional[EmissionsFractionReader] = None
     exo_prices: Optional[SectorExoPricesReader] = None
     ch4_emissions: Optional[CH4EmissionsReaderCAN] = None
-    taxation: Optional[TaxationReader] = None
+    taxation: Optional[TaxationStore] = None
     regions_dict: Optional[dict[Country, list[Region]]] = None
 
     @classmethod
@@ -238,6 +252,7 @@ class DataReaders:
         use_disagg_can_2014_reader: bool = False,
         use_provincial_can_reader: bool = False,
         regions_dict: dict[Country, list[Region]] = None,
+        taxation_filenames: Optional[dict[str, str]] = None,
     ):
         if regions_dict:
             all_regions = [region for regions in regions_dict.values() for region in regions]
@@ -252,7 +267,7 @@ class DataReaders:
         else:
             all_years = range(exog_data_range[0], exog_data_range[1] + 1)
 
-        datapaths = DataPaths.default_paths(raw_data_path, all_years)
+        datapaths = DataPaths.default_paths(raw_data_path, all_years, taxation_filenames)
 
         goods_criticality = GoodsCriticalityReader.from_csv(path=datapaths.goods_criticality_path)
         exchange_rates = ExchangeRatesReader.from_csv(path=datapaths.exchange_rates_path)
@@ -502,7 +517,9 @@ class DataReaders:
         if datapaths.ch4_emissions_path is not None and datapaths.ch4_emissions_path.exists():
             ch4_emissions = CH4EmissionsReaderCAN.read_data(datapaths.ch4_emissions_path)
 
-        taxation = _load_taxation_reader(datapaths.taxation_path)
+        taxation = _load_taxation_reader(
+            datapaths.taxation_path, datapaths.taxation_filenames
+        )
 
         return cls(
             icio=icio,
@@ -779,13 +796,22 @@ class DataReaders:
 _PIT_SUBDIR = "personal_income_tax"
 
 
-def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationReader]:
-    """Build the taxation reader from the taxation root, or ``None`` when absent.
+def _load_taxation_reader(
+    taxation_path: Optional[Path],
+    filenames: Optional[dict[str, str]] = None,
+) -> Optional[TaxationStore]:
+    """Build the taxation store from the taxation root, or ``None`` when absent.
 
     Optional, like the energy-sector readers: a missing ``taxation/`` tree is
     silent, while partial data (missing subdirectory or schedule CSV) emits a
     ``TaxationDataWarning`` and returns ``None`` so the run falls back to flat
-    tax. Jurisdiction is BC-only at this seam.
+    tax. The store covers every jurisdiction in the data; the per-country slice
+    happens at construction time, as it does for the other country-keyed readers.
+
+    Args:
+        taxation_path: The ``taxation/`` root under the raw-data directory.
+        filenames: Optional ``rates`` / ``credits`` / ``dividend`` filename
+            overrides, to read an alternative data source in the same schema.
     """
     if taxation_path is None or not taxation_path.exists():
         # Taxation simply not in use; silent, per the energy-sector convention.
@@ -804,7 +830,7 @@ def _load_taxation_reader(taxation_path: Optional[Path]) -> Optional[TaxationRea
         return None
 
     try:
-        return TaxationReader.from_dir(pit_dir)
+        return TaxationStore.from_dir(pit_dir, **(filenames or {}))
     except FileNotFoundError as error:
         # Subdirectory exists but a required schedule file does not; warn and
         # fall back to the flat-tax setup as above.
