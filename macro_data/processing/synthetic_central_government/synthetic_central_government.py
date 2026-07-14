@@ -156,7 +156,7 @@ class SyntheticCentralGovernment(ABC):
         employee_income_tax = tax_data.income_tax * (1 - tax_data.employee_social_insurance_tax) * total_employee_income
 
         total_rent_paid = synthetic_population.household_data["Rent Paid"].sum()
-        rental_income_tax = tax_data.income_tax * total_rent_paid
+        rental_income_tax = tax_data.income_tax * (total_rent_paid - total_social_housing_rent)
 
         financial_assets_income = synthetic_population.household_data["Income from Financial Assets"].sum()
         financial_income_tax = tax_data.income_tax * financial_assets_income
