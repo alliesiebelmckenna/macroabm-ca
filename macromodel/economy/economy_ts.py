@@ -308,11 +308,7 @@ def create_economy_timeseries(
     assert np.isclose(current_output, current_expenditure), (
         f"mismatch, output/expenditure GDP: {current_output / current_expenditure}"
     )
-    # TEMPORARY: the income leg misses by up to ~9e-5 in some disaggregated
-    # provincial builds (NB/PE/QC), an uncharacterized income-side discrepancy.
-    # rtol=5e-4 admits it while still rejecting any >0.05% error; revert to the
-    # exact default once the root cause is fixed.
-    assert np.isclose(current_output, current_income, rtol=5e-4), (
+    assert np.isclose(current_output, current_income), (
         f"mismatch, output/income GDP: {current_output / current_income}"
     )
 
