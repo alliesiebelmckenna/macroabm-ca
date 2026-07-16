@@ -234,7 +234,7 @@ def test_central_government_pit_full(datawrapper, test_individuals):
             (float("inf"), 0.168),
         ],
         pit_tax_credits=[
-            TaxCreditDef(kind="Personal Amount", amount=9869.0),
+            TaxCreditDef(credit="Personal Amount", amount=9869.0),
         ],
     )
 

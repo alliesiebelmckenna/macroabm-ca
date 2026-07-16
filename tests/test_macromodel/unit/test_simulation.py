@@ -804,3 +804,79 @@ def test_heterogeneous_investment_effectiveness(datawrapper):
         total_invested = sum(inv.sum() for inv in total_investment_history)
         # Just verify no errors - investment amount depends on profitability
         assert total_invested >= 0
+
+
+def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
+    """Full-Simulation integration of PIT bracket indexing.
+
+    A country carrying *multi-year* taxation data with progressive PIT opted in
+    makes ``Simulation.from_datawrapper`` auto-register the ``pit_schedule_update``
+    pre-hook, and the real ``run_prehooks`` loop advances the agent's brackets
+    (including a published bottom-rate change) with the calendar year.
+    """
+    import dataclasses
+
+    from macro_data.readers.taxation import TaxationReader
+    from macromodel.configurations import CentralGovernmentConfiguration
+
+    (tmp_path / "rates_thresholds.csv").write_text(
+        "tax_year,geo,lower,rate,index\n"
+        "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
+        "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
+    )
+    reader = TaxationReader.from_dir(tmp_path, jurisdiction="bc")
+
+    base_country = datawrapper.synthetic_countries["FRA"]
+    scale = base_country.scale
+    taxed_country = dataclasses.replace(base_country, taxation=reader)
+    # Shallow-copy the datawrapper with FRA's taxation attached (leave the shared
+    # module-scoped fixture untouched).
+    taxed_datawrapper = dataclasses.replace(
+        datawrapper,
+        synthetic_countries={
+            **datawrapper.synthetic_countries,
+            "FRA": taxed_country,
+        },
+    )
+
+    configuration = SimulationConfiguration(
+        country_configurations={
+            "FRA": CountryConfiguration(
+                central_government=CentralGovernmentConfiguration(
+                    activate_progressive_pit=True
+                )
+            )
+        }
+    )
+    configuration.seed = 0
+
+    simulation = Simulation.from_datawrapper(
+        datawrapper=taxed_datawrapper, simulation_configuration=configuration
+    )
+
+    # Auto-registration: a per-year schedule table exists, so the indexing
+    # pre-hook is registered by from_datawrapper.
+    assert len(simulation.prehooks) == 1
+    cg = simulation.countries["FRA"].central_government
+    assert "pit_schedule_by_year" in cg.states
+    assert cg.states["pit_thresholds"][0] == pytest.approx(37606.0 * scale)
+    assert cg.states["pit_rates"][0] == pytest.approx(0.0506)
+
+    # The real run_prehooks loop advances the schedule to the published 2016
+    # values, including the bottom-rate change (5.06% -> 6.00%).
+    simulation.run_prehooks(2016, 1)
+    assert cg.states["pit_thresholds"][0] == pytest.approx(40000.0 * scale)
+    assert cg.states["pit_rates"][0] == pytest.approx(0.0600)
+
+
+def test_no_pit_schedule_update_hook_without_taxation(datawrapper):
+    """A plain (no-taxation) country registers no indexing pre-hook — flat
+    parity, no auto-registration."""
+    configuration = SimulationConfiguration(
+        country_configurations={"FRA": CountryConfiguration()}
+    )
+    configuration.seed = 0
+    simulation = Simulation.from_datawrapper(
+        datawrapper=datawrapper, simulation_configuration=configuration
+    )
+    assert simulation.prehooks == []

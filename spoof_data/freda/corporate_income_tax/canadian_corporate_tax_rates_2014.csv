@@ -1,0 +1,15 @@
+jurisdiction,lower_rate,higher_rate,business_limit,investment_income_ccpc,notes
+Federal,0.11,0.15,500000,0.347,General rate 15% since Jan 1 2012; lower rate is small business (CCPC) rate on first $500000 (Footnote 1)
+Alberta,0.03,0.10,500000,0.10,
+British Columbia,0.025,0.11,500000,0.11,
+Manitoba,0.0,0.12,425000,0.12,Small business rate is nil; business limit increased $400000 to $425000 on Jan 1 2014 (Footnote 6)
+New Brunswick,0.045,0.12,500000,0.12,
+Newfoundland and Labrador,0.035,0.14,500000,0.14,Small business rate 4% to Jun 30 2014 then 3% from Jul 1 2014; value is day-weighted annual (Footnotes 2 and 3); uses federal $500000 limit
+Northwest Territories,0.04,0.115,500000,0.115,Uses federal $500000 small business limit (Footnote 2)
+Nova Scotia,0.03,0.16,350000,0.16,Small business rate reduced to 3% Jan 1 2014; business limit reduced $400000 to $350000 (Footnote 5)
+Nunavut,0.04,0.12,500000,0.12,Uses federal $500000 small business limit (Footnote 2)
+Ontario,0.045,0.115,500000,0.115,General rate 11.5%; further reductions deferred (Footnote 4)
+Prince Edward Island,0.045,0.16,500000,0.16,Uses federal $500000 small business limit (Footnote 2)
+Quebec,0.08,0.119,500000,0.119,SBD eligibility and rate changes are post-2016; 2014 values unaffected (Footnote 8)
+Saskatchewan,0.02,0.12,500000,0.12,
+Yukon,0.035,0.15,500000,0.15,Small business rate 4% to Jun 30 2014 then 3% from Jul 1 2014; value is day-weighted annual (Footnote 7)

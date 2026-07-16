@@ -249,6 +249,7 @@ class Individuals(Agent):
         expected_inflation: float,
         income_taxes: float,
         tau_firm: float,
+        dividend_income_taxes: float | None = None,
     ) -> np.ndarray:
         """Calculate expected future income for individuals.
 
@@ -286,6 +287,7 @@ class Individuals(Agent):
                 dividend_payout_ratio=self.states["Dividend Payout Ratio"],
                 income_taxes=income_taxes,
                 tau_firm=tau_firm,
+                dividend_income_taxes=dividend_income_taxes,
             )
         ).astype(float)
 
@@ -296,6 +298,7 @@ class Individuals(Agent):
         cpi: float,
         income_taxes: float,
         tau_firm: float,
+        dividend_income_taxes: float | None = None,
     ) -> np.ndarray:
         """Calculate current period income for individuals.
 
@@ -330,8 +333,74 @@ class Individuals(Agent):
                 dividend_payout_ratio=self.states["Dividend Payout Ratio"],
                 income_taxes=income_taxes,
                 tau_firm=tau_firm,
+                dividend_income_taxes=dividend_income_taxes,
             )
         ).astype(float)
+
+    def compute_gross_firm_dividend(
+        self,
+        firm_profits: np.ndarray,
+        tau_firm: float,
+    ) -> np.ndarray:
+        """Per-individual gross firm dividend ``D_i`` (before personal tax).
+
+        The actual after-corporate-tax dividend a ``FIRM_INVESTOR`` receives
+        (``payout_ratio * (1 - tau_firm) * max(0, firm_profits[invested_firm])``),
+        zero for everyone else. This is the real dividend (the household's cash);
+        the income-tax gross-up and dividend tax credit are derived from it
+        separately. Mirrors the firm-investor term in ``compute_income`` without
+        the at-source income-tax haircut (replaced by the PIT schedule when
+        dividend integration is enabled).
+
+        Args:
+            firm_profits: Current profit per firm.
+            tau_firm: Flat corporate (profit) tax rate.
+
+        Returns:
+            Gross dividend per individual.
+        """
+        activity = self.states["Activity Status"]
+        dividend = np.zeros(len(activity), dtype=float)
+        firm_inv = activity == ActivityStatus.FIRM_INVESTOR
+        corr = self.states["Corresponding Invested Firm"][firm_inv].astype(int)
+        dividend[firm_inv] = (
+            self.states["Dividend Payout Ratio"]
+            * (1.0 - tau_firm)
+            * np.maximum(0.0, firm_profits[corr])
+        )
+        return dividend
+
+    def compute_gross_bank_dividend(
+        self,
+        bank_profits: np.ndarray,
+        tau_firm: float,
+    ) -> np.ndarray:
+        """Per-individual gross bank dividend ``D_i`` (before personal tax).
+
+        The actual after-corporate-tax dividend a ``BANK_INVESTOR`` receives,
+        zero for everyone else; mirrors ``compute_gross_firm_dividend`` for bank
+        investors. The eligible/non-eligible split is governed by
+        ``bank_dividend_small_business_share`` (default 0.0, since banks are taxed
+        at the general corporate rate) and applied downstream in
+        ``build_dividend_tax_items``.
+
+        Args:
+            bank_profits: Current profit per bank.
+            tau_firm: Flat corporate (profit) tax rate.
+
+        Returns:
+            Gross dividend per individual.
+        """
+        activity = self.states["Activity Status"]
+        dividend = np.zeros(len(activity), dtype=float)
+        bank_inv = activity == ActivityStatus.BANK_INVESTOR
+        corr = self.states["Corresponding Invested Bank"][bank_inv].astype(int)
+        dividend[bank_inv] = (
+            self.states["Dividend Payout Ratio"]
+            * (1.0 - tau_firm)
+            * np.maximum(0.0, bank_profits[corr])
+        )
+        return dividend
 
     def update_demography(self) -> None:
         """Update demographic variables for individuals."""

@@ -42,10 +42,14 @@ from macro_data import SyntheticCountry
 from macromodel.agents.agent import Agent
 from macromodel.agents.banks.banks import Banks
 from macromodel.agents.central_bank.central_bank import CentralBank
-from macromodel.agents.central_government.central_government import CentralGovernment
+from macromodel.agents.central_government.central_government import (
+    CentralGovernment,
+    pit_credit_defs_to_state_dicts,
+)
 from macromodel.agents.central_government.pit_pools import (
     PitContext,
     build_credit_base_pool,
+    build_dividend_tax_items,
     build_taxable_income_pool,
 )
 from macromodel.agents.firms import Firms
@@ -53,7 +57,11 @@ from macromodel.agents.government_entities.government_entities import Government
 from macromodel.agents.households.households import Households
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.agents.individuals.individuals import Individuals
-from macromodel.configurations import CountryConfiguration
+from macromodel.configurations import CountryConfiguration, TaxCreditDef, activate_taxation
+from macromodel.configurations.central_government_configuration import (
+    CentralGovernmentConfiguration,
+    monetary_field_names,
+)
 from macromodel.economy.economy import Economy
 from macromodel.exchange_rates import ExchangeRates
 from macromodel.exogenous.exogenous import Exogenous
@@ -64,37 +72,98 @@ from macromodel.rest_of_the_world import RestOfTheWorld
 from macromodel.util.get_histogram import get_histogram
 
 
-def _compute_children_per_individual(
-    individual_ages: np.ndarray,
-    corr_households: np.ndarray,
-    age_cutoff: int,
-) -> np.ndarray:
-    """Count children below *age_cutoff* in each individual's household.
+def _scaled_tax_credit(credit: TaxCreditDef, scale: int) -> TaxCreditDef:
+    """Return a copy of *credit* with its ``unit="currency"`` fields scaled to agent units."""
+    updates = {
+        name: getattr(credit, name) * scale
+        for name in monetary_field_names(type(credit))
+        if getattr(credit, name) is not None
+    }
+    return credit.model_copy(update=updates)
 
-    Each **adult** in a household reports the same child count (the
-    household's total children below the cutoff).  Children themselves
-    report 0 (they are not adding credit bases for themselves).
 
-    Args:
-        individual_ages: Shape (n_ind,).  Age of every individual.
-        corr_households: Shape (n_ind,).  Household ID per individual.
-        age_cutoff: Strict upper age bound (e.g. 18 or 6).
+def _scale_pit_policy(
+    config: CentralGovernmentConfiguration, scale: int
+) -> CentralGovernmentConfiguration:
+    """Return a copy of *config* with every PIT policy dollar scaled to agent units.
 
-    Returns:
-        Shape (n_ind,).  Number of children below *age_cutoff* in the
-        individual's household.  Zero for individuals below the cutoff
-        themselves.
+    The single seam converting per-person statutory dollars (brackets, credit
+    currency fields, deductions) to agent-level units, so the construction-year
+    config and the per-year schedule cannot diverge. ``scale <= 1`` is an
+    identity; the caller-owned *config* is not mutated.
     """
-    n_ind = len(individual_ages)
-    children_per_hh = np.bincount(
-        corr_households.astype(int),
-        weights=(individual_ages < age_cutoff).astype(float),
-        minlength=corr_households.max() + 1,
-    )
-    result = children_per_hh[corr_households.astype(int)]
-    # Children themselves don't claim the credit
-    result[individual_ages < age_cutoff] = 0
-    return result
+    if scale <= 1:
+        return config
+
+    updates: dict = {}
+    if config.pit_brackets is not None:
+        updates["pit_brackets"] = [
+            (threshold * scale, rate) for threshold, rate in config.pit_brackets
+        ]
+    if config.pit_tax_credits is not None:
+        updates["pit_tax_credits"] = [
+            _scaled_tax_credit(credit, scale) for credit in config.pit_tax_credits
+        ]
+    for name in monetary_field_names(type(config)):
+        value = getattr(config, name)
+        if value is not None:
+            updates[name] = value * scale
+
+    if not updates:
+        return config
+    return config.model_copy(update=updates)
+
+
+def _build_pit_schedule_by_year(
+    base_config,
+    taxation_reader,
+    scale: int,
+) -> Optional[dict[int, dict]]:
+    """Build the ``{tax_year: state_fragment}`` PIT schedule table for every published year.
+
+    Each fragment holds that year's agent-scaled thresholds, rates, credits, and
+    deduction, which ``CentralGovernment.set_pit_for_year`` swaps into the agent
+    states as the calendar year advances. Returns ``None`` when progressive PIT
+    is not opted in or no taxation data is present.
+    """
+    if taxation_reader is None or not base_config.activate_progressive_pit:
+        return None
+
+    years = [int(y) for y in taxation_reader.pit_schedule.available_years]
+    if not years:
+        return None
+
+    table: dict[int, dict] = {}
+    for year in years:
+        config_year = activate_taxation(
+            base_config=base_config,
+            taxation_reader=taxation_reader,
+            tax_year=year,
+        )
+        if config_year.pit_brackets is None:
+            continue
+
+        config_year = _scale_pit_policy(config_year, scale)
+        brackets_array = np.array(config_year.pit_brackets, dtype=float)
+
+        fragment: dict = {
+            "pit_thresholds": brackets_array[:, 0],
+            "pit_rates": brackets_array[:, 1],
+        }
+        if config_year.pit_taxable_income_deductions is not None:
+            fragment["pit_taxable_income_deductions"] = (
+                config_year.pit_taxable_income_deductions
+            )
+        if config_year.pit_tax_credits is not None:
+            fragment["pit_tax_credits"] = pit_credit_defs_to_state_dicts(
+                config_year.pit_tax_credits
+            )
+        table[year] = fragment
+
+    if not table:
+        return None
+
+    return table
 
 
 class Country:
@@ -357,20 +426,14 @@ class Country:
 
         n_unemployed = (individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED).sum()
 
-        # Scale PIT bracket thresholds to agent-level income units.
-        # Each synthetic agent represents *scale* real people, so a
-        # $50k bracket for individuals becomes $50k × scale for agents.
-        # Scale a *copy* of the central-government config — never mutate the
-        # caller-owned configuration, which may be reused across repeated
-        # Country construction or calibration loops (otherwise the brackets
-        # would be multiplied again on every reuse).
-        central_government_config = country_configuration.central_government
-        if central_government_config.pit_brackets is not None and scale > 1:
-            central_government_config = deepcopy(central_government_config)
-            central_government_config.pit_brackets = [
-                (threshold * scale, rate)
-                for threshold, rate in central_government_config.pit_brackets
-            ]
+        # Layer the progressive PIT schedule onto the config when opted in, then
+        # scale its policy dollars to agent units.
+        central_government_config = activate_taxation(
+            base_config=country_configuration.central_government,
+            taxation_reader=synthetic_country.taxation,
+            tax_year=initial_year,
+        )
+        central_government_config = _scale_pit_policy(central_government_config, scale)
 
         central_government = CentralGovernment.from_pickled_agent(
             synthetic_central_government=synthetic_country.central_government,
@@ -383,24 +446,22 @@ class Country:
             n_industries=n_industries,
         )
 
-        # --- Progressive PIT: pre-calibrate the effective rate ---
-        # When a progressive schedule is configured, compute the
-        # implied effective tax rate on the synthetic employee income
-        # distribution and overwrite states["Income Tax"].  This ensures
-        # that the very first period's wage-setting, after-tax income,
-        # and rental income calculations use the schedule-consistent
-        # rate rather than the raw OECD average — eliminating a
-        # calibration shock at t=0.
+        # Per-year PIT schedule table for the pit_schedule_update pre-hook.
+        pit_schedule_by_year = _build_pit_schedule_by_year(
+            base_config=country_configuration.central_government,
+            taxation_reader=synthetic_country.taxation,
+            scale=scale,
+        )
+        if pit_schedule_by_year:
+            central_government.states["pit_schedule_by_year"] = pit_schedule_by_year
+
+        # Pre-calibrate states["Income Tax"] to the schedule-implied effective
+        # rate so the first period carries no t=0 calibration shock.
         pit_thresholds = central_government.states.get("pit_thresholds")
         pit_rates = central_government.states.get("pit_rates")
         if pit_thresholds is not None and pit_rates is not None:
             ind_ages = individuals.states.get("Age")
             ind_corr_hh = individuals.states.get("Corresponding Household ID")
-            have_hh = ind_ages is not None and ind_corr_hh is not None
-
-            # Processing phase: assemble Pool A (taxable income) and Pool B
-            # (credit base) on the synthetic employee-income distribution,
-            # then let the government's tax core imply the effective rate.
             pit_ctx = PitContext(
                 employee_income=individuals.states["Employee Income"],
                 employee_si_rate=float(
@@ -410,14 +471,6 @@ class Country:
                 individuals_corr_households=ind_corr_hh,
                 households_type=households.states.get("Type"),
                 households_n_adults=households.states.get("Number of Adults"),
-                children_under_18_per_ind=(
-                    _compute_children_per_individual(ind_ages, ind_corr_hh, 18)
-                    if have_hh else None
-                ),
-                children_under_6_per_ind=(
-                    _compute_children_per_individual(ind_ages, ind_corr_hh, 6)
-                    if have_hh else None
-                ),
             )
             taxable_pool = build_taxable_income_pool(pit_ctx)
             credit_pool = build_credit_base_pool(
@@ -425,8 +478,6 @@ class Country:
                 taxable_pool,
                 pit_ctx,
             )
-            # compute_pit updates states["Income Tax"] to the schedule-implied
-            # effective rate (the pre-calibration goal).
             central_government.compute_pit(taxable_pool, credit_pool)
 
         government_entities = GovernmentEntities.from_pickled_agent(
@@ -794,6 +845,7 @@ class Country:
         )
 
         # Individual income
+        _div_integration = self.central_government.states.get("pit_dividend_integration", False)
         self.individuals.ts.expected_income.append(
             self.individuals.compute_expected_income(
                 expected_firm_profits=self.firms.ts.current("expected_profits"),
@@ -802,6 +854,7 @@ class Country:
                 expected_inflation=self.economy.ts.current("estimated_cpi_inflation")[0],
                 income_taxes=self.central_government.states["Income Tax"],
                 tau_firm=self.central_government.states["Profit Tax"],
+                dividend_income_taxes=0.0 if _div_integration else None,
             )
         )
 
@@ -1315,6 +1368,7 @@ class Country:
 
         # E1. INDIVIDUAL AND HOUSEHOLD INCOME
         # Update individual income components
+        _div_integration = self.central_government.states.get("pit_dividend_integration", False)
         self.individuals.ts.income.append(
             self.individuals.compute_income(
                 firm_profits=self.firms.ts.current("profits"),
@@ -1322,6 +1376,7 @@ class Country:
                 cpi=self.economy.ts.current("cpi")[0],
                 income_taxes=self.central_government.states["Income Tax"],
                 tau_firm=self.central_government.states["Profit Tax"],
+                dividend_income_taxes=0.0 if _div_integration else None,
             )
         )
         self.individuals.ts.income_histogram.append(get_histogram(self.individuals.ts.current("income"), self.scale))
@@ -1457,26 +1512,56 @@ class Country:
         self.economy.ts.bank_insolvency_rate.append([self.banks.compute_insolvency_rate()])
 
         # G5. GOVERNMENT REVENUE
-        # Processing phase: distribute household-level rental and financial
-        # income to individuals, then assemble the two PIT pools (taxable
-        # income + credit base).  Adding a new income stream or tax credit
-        # means editing pit_pools.py and this block — the central
-        # government's tax core (compute_pit) stays fixed.
+        # Distribute household income to individuals and assemble the PIT pools.
+        ind_ages = self.individuals.states.get("Age")
+        ind_corr_hh = self.individuals.states.get("Corresponding Household ID")
+
         rental_income_per_individual = self.households.distribute_rental_income_to_individuals(
             housing_data=self.housing_market.states["properties"],
             corr_households=self.individuals.states["Corresponding Household ID"],
             individual_employee_income=self.individuals.ts.current("employee_income"),
             couple_rental_income_split=self.central_government.states["couple_rental_income_split"],
+            individuals_age=ind_ages,
         )
         financial_income_per_individual = self.households.distribute_financial_income_to_individuals(
             household_financial_income=self.households.ts.current("income_financial_assets"),
             corr_households=self.individuals.states["Corresponding Household ID"],
             n_individuals=len(self.individuals.states["Corresponding Household ID"]),
+            individuals_age=ind_ages,
         )
 
-        ind_ages = self.individuals.states.get("Age")
-        ind_corr_hh = self.individuals.states.get("Corresponding Household ID")
-        have_child_context = ind_ages is not None and ind_corr_hh is not None
+        # Dividend integration (off by default): gross up firm and bank dividends
+        # for the taxable pool and build the dividend tax credits.
+        grossed_up_dividend_per_ind = None
+        dividend_tax_credit_per_ind = None
+        if self.central_government.states.get("pit_dividend_integration", False):
+            tau_firm = float(self.central_government.states["Profit Tax"])
+            gross_up_kwargs = dict(
+                eligible_gross_up=float(self.central_government.states["dividend_eligible_gross_up"]),
+                non_eligible_gross_up=float(self.central_government.states["dividend_non_eligible_gross_up"]),
+                eligible_dtc_rate=float(self.central_government.states["dividend_eligible_dtc_rate"]),
+                non_eligible_dtc_rate=float(self.central_government.states["dividend_non_eligible_dtc_rate"]),
+            )
+            gross_firm_dividend = self.individuals.compute_gross_firm_dividend(
+                firm_profits=self.firms.ts.current("profits"),
+                tau_firm=tau_firm,
+            )
+            grossed_up_firm, dtc_firm = build_dividend_tax_items(
+                dividend_income=gross_firm_dividend,
+                small_business_share=float(self.central_government.states["dividend_small_business_share"]),
+                **gross_up_kwargs,
+            )
+            gross_bank_dividend = self.individuals.compute_gross_bank_dividend(
+                bank_profits=self.banks.ts.current("profits"),
+                tau_firm=tau_firm,
+            )
+            grossed_up_bank, dtc_bank = build_dividend_tax_items(
+                dividend_income=gross_bank_dividend,
+                small_business_share=float(self.central_government.states["bank_dividend_small_business_share"]),
+                **gross_up_kwargs,
+            )
+            grossed_up_dividend_per_ind = grossed_up_firm + grossed_up_bank
+            dividend_tax_credit_per_ind = dtc_firm + dtc_bank
 
         pit_ctx = PitContext(
             employee_income=self.individuals.ts.current("employee_income"),
@@ -1485,18 +1570,11 @@ class Country:
             ),
             rental_income=rental_income_per_individual,
             financial_income=financial_income_per_individual,
+            grossed_up_dividend=grossed_up_dividend_per_ind,
             individuals_age=ind_ages,
             individuals_corr_households=ind_corr_hh,
             households_type=self.households.states.get("Type"),
             households_n_adults=self.households.states.get("Number of Adults"),
-            children_under_18_per_ind=(
-                _compute_children_per_individual(ind_ages, ind_corr_hh, 18)
-                if have_child_context else None
-            ),
-            children_under_6_per_ind=(
-                _compute_children_per_individual(ind_ages, ind_corr_hh, 6)
-                if have_child_context else None
-            ),
         )
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
         credit_base_per_ind = build_credit_base_pool(
@@ -1511,9 +1589,7 @@ class Country:
                 self.households.states["Tenure Status of the Main Residence"] == 3
             ].sum(),
             current_income_financial_assets=self.households.ts.current("income_financial_assets"),
-            # Pass both individual income streams so the direct-call fallback
-            # (when the prebuilt pools below are omitted) can rebuild the
-            # taxable-income pool symmetrically. The main path uses the pools.
+            # For the direct-call fallback; the main path uses the pools below.
             current_ind_rental_income=rental_income_per_individual,
             current_ind_financial_income=financial_income_per_individual,
             current_ind_activity=self.individuals.states["Activity Status"],
@@ -1528,6 +1604,8 @@ class Country:
             current_total_exports=self.economy.ts.current("exports_before_taxes").sum(),
             taxable_income_per_ind=taxable_income_per_ind,
             credit_base_per_ind=credit_base_per_ind,
+            grossed_up_dividend_per_ind=grossed_up_dividend_per_ind,
+            direct_credits_per_ind=dividend_tax_credit_per_ind,
         )
 
         # General government fields

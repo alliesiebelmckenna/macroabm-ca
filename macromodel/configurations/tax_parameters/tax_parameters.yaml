@@ -1,0 +1,62 @@
+# Canadian scalar tax parameters, keyed by jurisdiction and tax year.
+# Scalars only: bracket and credit schedules live in the taxation CSVs, not here.
+# Each field name matches a CentralGovernmentConfiguration field; the reader
+# applies a block as an override. Values are tagged ASSUMPTION where they are a
+# modelling guess to revisit rather than a published figure.
+#
+# Resolution: the `default` block supplies every scalar, and a jurisdiction's own
+# block overrides it field by field. A jurisdiction listed with no values simply
+# inherits the defaults, so a province runs before anyone has tuned it. Within a
+# block, a year not listed falls back to the latest prior year.
+#
+# Every taxing authority in the schedule CSVs is listed below, so tuning one is
+# an edit rather than an addition. They currently all inherit the defaults, whose
+# values are BC's — none of these four scalars is a BC-specific statutory fact.
+
+default:
+  2014:
+    # Dividend integration fallback switch, used only when no dividend schedule
+    # CSV is present; when the schedule is found, integration is activated
+    # automatically and this is overridden to True. Kept False for parity.
+    pit_dividend_integration: false
+
+    # ASSUMPTION: provisional uniform split of firm dividends; s = share treated
+    # as other-than-eligible (small-business rate), (1 - s) eligible.
+    dividend_small_business_share: 0.90
+
+    # Banks are taxed at the general corporate rate, so all bank dividends are
+    # eligible (s = 0 is definitional).
+    bank_dividend_small_business_share: 0.0
+
+    # ASSUMPTION: share of a couple household's rental income assigned to the
+    # higher earner. 0.5 = equal 50/50 split.
+    couple_rental_income_split: 0.5
+
+# British Columbia — the calibrated jurisdiction. Stated explicitly rather than
+# inherited: BC is the one authority whose values are actively maintained, so its
+# block must not move when a default is retuned for someone else.
+bc:
+  2014:
+    pit_dividend_integration: false
+    dividend_small_business_share: 0.90
+    bank_dividend_small_business_share: 0.0
+    couple_rental_income_split: 0.5
+
+# Federal. The federal authority is a jurisdiction like any other here.
+ca: {}
+
+# The remaining provinces. Listed for tweakability; each inherits `default` until
+# its own assumptions are sourced. Quebec is included even though it has no
+# bracket schedule yet, so adding one later needs no change here.
+ab: {}
+mb: {}
+nb: {}
+nl: {}
+ns: {}
+# Quoted: bare `on` is a YAML boolean, so an unquoted key would parse as True and
+# Ontario's block would be silently unreachable. The reader rejects non-string
+# keys for the same reason.
+"on": {}
+pe: {}
+qc: {}
+sk: {}

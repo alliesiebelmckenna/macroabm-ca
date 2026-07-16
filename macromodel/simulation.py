@@ -199,6 +199,21 @@ class Simulation:
             else None
         )
 
+        # Register the PIT schedule-update pre-hook when any government carries a
+        # per-year PIT schedule table; the hook self-gates per government.
+        prehooks: list[Callable] = []
+        if any(
+            "pit_schedule_by_year" in country.central_government.states
+            for country in countries.values()
+        ):
+            # Local import avoids a circular dependency (the hook module imports
+            # Simulation).
+            from macromodel.utils.prehooks.pit_schedule_update import (
+                create_pit_schedule_update_hook,
+            )
+
+            prehooks.append(create_pit_schedule_update_hook())
+
         return cls(
             countries=countries,
             rest_of_the_world=rest_of_the_world,
@@ -208,6 +223,7 @@ class Simulation:
             configuration=deepcopy(simulation_configuration),
             initial_year=datawrapper.configuration.year,
             regional_aggregator=aggregator,
+            prehooks=prehooks,
         )
 
     def reset(self, configuration: Optional[SimulationConfiguration] = None) -> None:

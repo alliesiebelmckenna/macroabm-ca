@@ -1,54 +1,18 @@
-"""Tax credit schedule — per-individual non-refundable tax credit definitions.
+"""Module for producing a non-refundable tax credit schedule.
 
-This module provides the ``TaxCreditSchedule`` class, which reads a CSV
-containing per-credit-kind definitions (base amounts, eligibility rules,
-indexing flags) and supplies per-individual credit eligibility at
-computation time.
+This module reads per-credit definitions (base amounts, eligibility rules,
+index flags) from a consolidated ``non_refundable_tax_credits.csv`` keyed by
+tax year and jurisdiction, and supplies the published credit components for a
+requested year. The ``TaxCreditSchedule`` class is the companion to
+``PITSchedule``: an individual's eligible credit bases are summed and valued at
+the bottom marginal rate, then subtracted from gross tax.
 
-CSV format (tax credit definitions)
-------------------------------------
-::
-
-    tax_year,credit_kind,credit_amount,clawback_start,cap,rate,clawback_rate,indexing
-    2014,Personal Amount,9869,,,,0.0506,,1
-    2014,Age Amount,4426,32943,"62,450",0.0506,0.15,1
-    ...
-
-Columns:
-    - ``tax_year`` (int): Base year for nominal amounts.
-    - ``credit_kind`` (str): Human-readable credit name.
-    - ``credit_amount`` (float, optional): Base dollar amount.
-    - ``clawback_start`` (float, optional): Income where phaseout begins.
-    - ``cap`` (float, optional): Income cap / upper phaseout bound.
-    - ``rate`` (float): Credit rate (stored but not used at runtime —
-      the model always applies ``pit_rates[0]``).
-    - ``clawback_rate`` (float, optional): Phaseout rate.
-    - ``indexing`` (int, 0/1): Whether CPI-indexed in later years.
-
-Eligibility mapping
---------------------
-The credit *kind* string is mapped to eligibility rules internally:
-
-    ==================== ===============================================
-    ``credit_kind``       Eligibility rule
-    ==================== ===============================================
-    ``Personal Amount``   Universal (every individual).
-    ``Age Amount``        Age ≥ 65.
-    ``Spousal Amount``    *(deferred — requires spousal income lookup)*
-    ``Equivalent To…``    *(deferred — requires single-parent detection)*
-    ``CPP Amount``        *(deferred — requires contribution data)*
-    ``EI Amount``         *(deferred — requires contribution data)*
-    ``Pension Income…``   *(deferred — requires pension income data)*
-    ``Child Amount…``     *(deferred — requires child agents)*
-    ==================== ===============================================
-
-CPI inflation
--------------
-When ``get_credits(tax_year=T)`` is called with *T* beyond the base
-year, indexed credits are compound-inflated using the provided CPI map
-(the same map used for bracket indexation).  Non-indexed credits
-(e.g., ``Pension Income Amount``) remain at their nominal base-year
-values.
+Each credit is mapped internally to an eligibility rule — the Personal
+Amount is universal, the Age Amount is age-gated, the Spousal and Equivalent To
+Spouse amounts are household-tested; other known BC credits are recorded but
+deferred until the model carries their eligibility signal. Lookups are
+statutory only: a requested year must be published in the CSV, since the
+schedule is never projected past the years it records.
 """
 
 from __future__ import annotations
@@ -60,104 +24,92 @@ from typing import Optional
 import numpy as np
 
 
-# ── required CSV columns ──────────────────────────────────────────────
+# Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
-    "tax_year",          # int — base year
-    "credit_kind",       # str — e.g. "Personal Amount", "Age Amount"
-    "indexing",          # int (0/1) — whether CPI-indexed
+    "tax_year",  # taxation year the row applies to
+    "geo",       # jurisdiction key (e.g. "BC")
+    "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
+    "index",     # whether the amount is statutorily indexed
 }
 
 
-# ── eligibility mapping: credit_kind → eligibility rules ──────────────
-# Each entry is a dict of rules to check.  An individual is eligible
-# iff *all* rules in the dict are satisfied.  Expand as new credits
-# are activated.
-
+# Maps each credit to a dict of eligibility rules; an individual is
+# eligible when all rules in the dict are satisfied. Expand as credits activate.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
+    # Active: eligibility the runtime credit pool can express today.
     "Personal Amount":          {},                                     # universal
     "Age Amount":               {"age_min": 65},
-    "Pension Income Amount":    {"age_min": 65},                       # age proxy for pension receipt
     "Spousal Amount":           {"in_couple_household": True},          # married / common-law
     "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
-    "Child Amount Under 18":    {"num_children_under_18_min": 1},      # parent
-    "Child Amount Under 6":     {"num_children_under_6_min": 1},       # parent
+    # Deferred: known BC credits whose eligibility signal the model does not yet
+    # carry, so the builder skips them. Trailing notes flag nuances to resolve
+    # before activating one.
+    "Pension Income Amount":    {"has_eligible_pension_income": True},  # lesser of $1000 or actual eligible pension income; NOT age-based (CPP may start 60-70, also covers non-CPP pension)
+    "B.C. Caregiver Amount":        {"is_caregiver": True},            # caring for a dependant with impairment; clawed back on the dependant's income
+    "Disability Amount":            {"has_disability": True},          # DTC-eligible individual
+    "Disability Amount (Child)":    {"has_disability_dependant": True},# supplement for a dependant under 18 with a disability
+    "Adoption Amount":              {"has_adoption_expense": True},    # event-based: amount column is the MAX eligible expense, not a flat base
+    "Volunteer Firefighter Amount": {"is_volunteer_first_responder": True},  # 200+ volunteer hours
+    "Medical Expense Amount":       {"has_medical_expense": True},     # formula: expenses minus lesser(3% net income, cap); amount column blank
+    "BC Tax Reduction Credit":      {"is_income_tested_reduction": True},  # direct $ reduction, NOT base x rate; reduced by 3.56% of net income over threshold
 }
 
-
-# ══════════════════════════════════════════════════════════════════════
-# TaxCreditComponent
-# ══════════════════════════════════════════════════════════════════════
 
 @dataclass
 class TaxCreditComponent:
     """A single non-refundable tax credit defined for a base tax year.
 
     Attributes:
-        kind: Human-readable credit name (e.g. ``"Age Amount"``).
+        credit: Human-readable credit name (e.g. ``"Age Amount"``).
         amount: Base dollar amount in the base tax year.
-        indexing: Whether this credit is CPI-indexed in later years.
+        index: Whether the amount is statutorily indexed.  Recorded for
+            reference only; not consumed anywhere (there is no forward
+            projection).
         eligibility: Dict of eligibility rules (e.g. ``{"age_min": 65}``).
             Empty dict means universal.
-        clawback_start: Income of spouse/dependent at which clawback
+        clawback: Income of spouse/dependent at which clawback
             begins.  None means no clawback.
-        clawback_cap: Income of spouse/dependent at which the credit
+        top: Income of spouse/dependent at which the credit
             is fully eliminated.  None means no cap.
     """
 
-    kind: str
+    credit: str
     amount: float
-    indexing: bool = True
+    index: bool = True
     eligibility: dict[str, object] = field(default_factory=dict)
-    clawback_start: Optional[float] = None
-    clawback_cap: Optional[float] = None
+    clawback: Optional[float] = None
+    top: Optional[float] = None
 
-
-# ══════════════════════════════════════════════════════════════════════
-# TaxCreditSchedule
-# ══════════════════════════════════════════════════════════════════════
 
 class TaxCreditSchedule:
-    """Collection of tax credits for a base year, with CPI indexing.
-
-    Typical usage::
-
-        schedule = TaxCreditSchedule.from_csv("BC_tax_credit_2014.csv")
-        credits = schedule.get_credits(tax_year=2017, cpi_map={2014: 0.01, ...})
-        # → list[TaxCreditComponent] with CPI-inflated amounts
-
-        # At tax time, sum eligible credit bases per individual:
-        for ind_age, ind_income in zip(ages, incomes):
-            eligible_bases = [
-                c.amount for c in credits if _is_eligible(c, ind_age, ind_income)
-            ]
-            credit = sum(eligible_bases) * bottom_bracket_rate
-    """
-
-    # ── internal ──────────────────────────────────────────────────────
+    """Collection of published tax credits, looked up by year."""
 
     def __init__(
         self,
         credits: list[TaxCreditComponent],
         base_year: int,
-        cpi_map: Optional[dict[int, float]] = None,
+        credits_by_year: Optional[dict[int, list[TaxCreditComponent]]] = None,
     ) -> None:
         self._credits = list(credits)
         self._base_year = base_year
-        self._cpi_map: dict[int, float] = dict(cpi_map) if cpi_map else {}
-
-    # ── factories ────────────────────────────────────────────────────
+        # Per-year groups for statutory lookup; default = single-year (base only).
+        self._by_year: dict[int, list[TaxCreditComponent]] = (
+            {int(y): list(cs) for y, cs in credits_by_year.items()}
+            if credits_by_year is not None
+            else {base_year: list(credits)}
+        )
 
     @classmethod
     def from_csv(
         cls,
         path: str | Path,
-        cpi_map: Optional[dict[int, float]] = None,
+        jurisdiction: str,
     ) -> "TaxCreditSchedule":
         """Load tax credit definitions from a CSV file.
 
         Args:
-            path: Path to the CSV (e.g. ``BC_tax_credit_2014.csv``).
-            cpi_map: Optional ``{year: inflation_rate}`` for CPI indexing.
+            path: Path to the CSV (``non_refundable_tax_credits.csv``).
+            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
 
         Returns:
             Configured ``TaxCreditSchedule``.
@@ -170,96 +122,105 @@ class TaxCreditSchedule:
         col_map = {c: c.lower().replace(" ", "_") for c in df.columns}
         df = df.rename(columns=col_map)
 
-        # Validate required columns exist
+        # Validate the consolidated columns exist
         missing = _TC_REQUIRED_COLS - set(df.columns)
         if missing:
             raise ValueError(
-                f"Tax-credit CSV is missing required columns: {sorted(missing)}. "
+                f"Tax-credit CSV is missing required columns: {sorted(missing)} "
+                f"(consolidated non_refundable_tax_credits format). "
                 f"Found: {sorted(df.columns)}"
             )
 
-        base_year = int(df["tax_year"].iloc[0])
+        geo = jurisdiction.upper()
+        df = df[df["geo"].astype(str).str.upper() == geo].copy()
+        if df.empty:
+            raise ValueError(
+                f"Tax-credit CSV {path} does not contain any rows for geo {geo}"
+            )
 
-        # ── build TaxCreditComponent for each row ──
-        credits: list[TaxCreditComponent] = []
+        # Minimum year, not the first row's, so an unsorted CSV does not shift
+        # the base credit set.
+        base_year = int(df["tax_year"].min())
+
+        # Build a component per row, grouped by tax_year for statutory lookup.
+        credits_by_year: dict[int, list[TaxCreditComponent]] = {}
         for _, row in df.iterrows():
-            kind = str(row["credit_kind"]).strip()
+            credit = str(row["credit"]).strip()
 
             # Parse amount — empty means no predetermined amount
-            raw_amount = row.get("credit_amount")
+            raw_amount = row.get("amount")
             if pd.isna(raw_amount) or str(raw_amount).strip() == "":
                 # Credits like CPP/EI have no predetermined amount; skip
                 continue
 
             amount = float(str(raw_amount).replace(",", ""))
-            # Keep credits even when $0 — they prove the eligibility
-            # infrastructure and open policy discussions.  The zero
-            # amount means they have no revenue impact by default.
+            # Keep $0 credits: they carry the eligibility wiring with no
+            # revenue impact by default.
 
-            indexing = bool(int(row["indexing"])) if not pd.isna(row["indexing"]) else True
+            index = bool(int(row["index"])) if not pd.isna(row["index"]) else True
 
             # Parse optional clawback fields (spousal / dependent income tests).
-            _clawback_start: Optional[float] = None
-            raw_cs = row.get("clawback_start")
+            clawback: Optional[float] = None
+            raw_cs = row.get("clawback")
             if raw_cs is not None and not (isinstance(raw_cs, float) and pd.isna(raw_cs)) and str(raw_cs).strip() != "":
-                _clawback_start = float(str(raw_cs).replace(",", ""))
+                clawback = float(str(raw_cs).replace(",", ""))
 
-            _clawback_cap: Optional[float] = None
-            raw_cc = row.get("cap")
+            top: Optional[float] = None
+            raw_cc = row.get("top")
             if raw_cc is not None and not (isinstance(raw_cc, float) and pd.isna(raw_cc)) and str(raw_cc).strip() != "":
-                _clawback_cap = float(str(raw_cc).replace(",", ""))
+                top = float(str(raw_cc).replace(",", ""))
 
             # Look up eligibility rules
-            eligibility = _ELIGIBILITY_RULES.get(kind)
+            eligibility = _ELIGIBILITY_RULES.get(credit)
             if eligibility is None:
-                # Unknown credit kind → universal fallback (deferred credits
-                # loaded from CSV but not yet mapped get universal treatment;
-                # they'll become meaningful once the eligibility map is
-                # expanded).
-                eligibility = {}
+                # Unknown credit: mark it non-expressible so the config builder
+                # skips it rather than granting it to everyone.
+                eligibility = {"_deferred_unmapped": True}
 
-            credits.append(TaxCreditComponent(
-                kind=kind,
-                amount=amount,
-                indexing=indexing,
-                eligibility=eligibility,
-                clawback_start=_clawback_start,
-                clawback_cap=_clawback_cap,
-            ))
+            credits_by_year.setdefault(int(row["tax_year"]), []).append(
+                TaxCreditComponent(
+                    credit=credit,
+                    amount=amount,
+                    index=index,
+                    eligibility=eligibility,
+                    clawback=clawback,
+                    top=top,
+                )
+            )
 
-        return cls(credits=credits, base_year=base_year, cpi_map=cpi_map)
+        base_credits = credits_by_year.get(base_year, [])
+        return cls(
+            credits=base_credits,
+            base_year=base_year,
+            credits_by_year=credits_by_year,
+        )
 
     @classmethod
     def from_name(
         cls,
         filename: str,
-        cpi_map: Optional[dict[int, float]] = None,
-        schedule_dir: Optional[Path] = None,
+        schedule_dir: Path,
+        jurisdiction: str,
     ) -> "TaxCreditSchedule":
-        """Load by filename from the schedule directory.
+        """Load by filename from *schedule_dir*.
 
         Args:
-            filename: CSV filename (e.g. ``"BC_tax_credit_2014.csv"``).
-            cpi_map: Optional CPI inflation map.
-            schedule_dir: Override the default ``spoof_data/freda/`` directory.
+            filename: CSV filename (``"non_refundable_tax_credits.csv"``).
+            schedule_dir: Directory holding the schedule CSVs — typically
+                ``raw_data_path / "taxation" / "personal_income_tax"``.
+            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
 
         Returns:
             Configured ``TaxCreditSchedule``.
         """
-        if schedule_dir is None:
-            schedule_dir = (
-                Path(__file__).resolve().parent.parent.parent.parent.parent
-                / "spoof_data" / "freda"
-            )
+        schedule_dir = Path(schedule_dir)
         path = schedule_dir / filename
         if not path.exists():
             raise FileNotFoundError(
                 f"Tax-credit file not found: {path}\n"
                 f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
-        return cls.from_csv(path, cpi_map=cpi_map)
-
-    # ── properties ───────────────────────────────────────────────────
+        return cls.from_csv(path, jurisdiction=jurisdiction)
 
     @property
     def base_year(self) -> int:
@@ -271,105 +232,31 @@ class TaxCreditSchedule:
         """All credit components for the base year (nominal amounts)."""
         return list(self._credits)
 
-    # ── public methods ───────────────────────────────────────────────
-
     def get_credits(
         self,
         tax_year: int,
-        cpi_map: Optional[dict[int, float]] = None,
     ) -> list[TaxCreditComponent]:
-        """Return credits with CPI-inflated amounts for *tax_year*.
+        """Return the published credit components for *tax_year* (statutory lookup).
 
-        Indexed credits are compound-inflated from the base year.
-        Non-indexed credits keep their nominal amount.
+        A year present in the schedule returns its own published amounts,
+        clawbacks, and rates. A year not in the schedule raises, since the
+        reader does not project past published years.
 
         Args:
             tax_year: Target tax year.
-            cpi_map: CPI map (overrides the one stored at construction).
 
         Returns:
-            List of ``TaxCreditComponent`` with amounts in *tax_year* dollars.
+            List of ``TaxCreditComponent`` for *tax_year*.
+
+        Raises:
+            ValueError: If *tax_year* is not one of the published years.
         """
-        cmap = dict(cpi_map) if cpi_map else self._cpi_map
+        if tax_year in self._by_year:
+            return list(self._by_year[tax_year])
 
-        if tax_year <= self._base_year or not cmap:
-            return self._credits
-
-        # Compute compound inflation factor
-        factor = 1.0
-        for y in range(self._base_year, tax_year):
-            rate = cmap.get(y)
-            if rate is not None:
-                factor *= 1.0 + rate
-
-        return [
-            TaxCreditComponent(
-                kind=c.kind,
-                amount=c.amount * factor if c.indexing else c.amount,
-                indexing=c.indexing,
-                eligibility=c.eligibility,
-                clawback_start=c.clawback_start * factor if (c.indexing and c.clawback_start is not None) else c.clawback_start,
-                clawback_cap=c.clawback_cap * factor if (c.indexing and c.clawback_cap is not None) else c.clawback_cap,
-            )
-            for c in self._credits
-        ]
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Public helper: per-individual eligibility
-# ══════════════════════════════════════════════════════════════════════
-
-def is_eligible_for_credit(
-    credit: TaxCreditComponent,
-    age: Optional[float] = None,
-    gender: Optional[int] = None,
-    employee_income: Optional[float] = None,
-    num_children_under_18: Optional[int] = None,
-    num_children_under_6: Optional[int] = None,
-    in_couple_household: Optional[bool] = None,
-    is_single_parent: Optional[bool] = None,
-) -> bool:
-    """Check whether an individual qualifies for a given tax credit.
-
-    All rules in ``credit.eligibility`` must be satisfied.
-    Empty eligibility dict → universal credit (always ``True``).
-
-    Args:
-        credit: Credit component to check.
-        age: Individual's age (required if eligibility has ``age_min``).
-        gender: Individual's gender (required if eligibility has ``gender``).
-        employee_income: Individual's income (required for future clawback).
-        num_children_under_18: Number of children under 18 in the individual's
-            household (required for ``num_children_under_18_min``).
-        num_children_under_6: Number of children under 6 in the individual's
-            household (required for ``num_children_under_6_min``).
-        in_couple_household: Whether the individual lives in a couple
-            household (required for ``in_couple_household``).
-        is_single_parent: Whether the individual is a single parent
-            (required for ``is_single_parent``).
-
-    Returns:
-        ``True`` if the individual qualifies.
-    """
-    rules = credit.eligibility
-    if not rules:
-        return True
-
-    if "age_min" in rules and (age is None or age < rules["age_min"]):
-        return False
-
-    if "num_children_under_18_min" in rules:
-        if num_children_under_18 is None or num_children_under_18 < rules["num_children_under_18_min"]:
-            return False
-
-    if "num_children_under_6_min" in rules:
-        if num_children_under_6 is None or num_children_under_6 < rules["num_children_under_6_min"]:
-            return False
-
-    if "in_couple_household" in rules and not in_couple_household:
-        return False
-
-    if "is_single_parent" in rules and not is_single_parent:
-        return False
-
-    return True
+        raise ValueError(
+            f"tax_year {tax_year} is not in the published credit schedule "
+            f"(available years: {sorted(self._by_year)}). The reader is "
+            f"lookup-only and does not project past the published years; add "
+            f"an explicit row for {tax_year} to the schedule CSV."
+        )
