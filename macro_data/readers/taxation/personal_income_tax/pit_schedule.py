@@ -1,9 +1,13 @@
 """
 Module for producing a Canadian personal income tax (PIT) schedule.
 
-This module produces the ``PITSchedule`` class, which reads, processes and stores year-specific personal income tax (PIT) parameters like tax rates and tax bracket thresholds that are used to compute income tax amounts payable by individuals in a progressive tax system. A tax is "progressive" if an individual's income in higher tax brackets (i.e., exceeding certain thresholds) is taxed at a higher marginal rate than their income in lower brackets, such that their average tax rate is less than the marginal tax rate corresponding to their income. If the requisite data are supplied, ``PITSchedule`` also includes non-refundable tax credit (NRTC) parameters like credit amounts, clawback rates and eligibility criteria that can be used to reduce an individual's income tax payable. 
+This module produces the ``PITSchedule`` class, which reads, processes and stores year- and jurisdiction-specific personal income tax (PIT) parameters like tax rates and tax bracket thresholds that are used to compute income tax amounts payable by individuals in a progressive tax system. 
 
-``PITSchedule`` is passed into ``TaxationReader`` which is then used to initialize the Central Government agent in the ``macromodel`` package of MacroABM-CA.
+A tax is "progressive" if an individual's income in higher tax brackets (i.e., exceeding certain thresholds) is taxed at a higher marginal rate than their income in lower brackets, such that their average tax rate is less than the marginal tax rate corresponding to their income. "Jurisdictions" here refer to whether taxes are provincial, territorial, or federal.
+
+If supplied, ``PITSchedule`` also incorporates year- and jurisdiction-specific non-refundable tax credit (NRTC) parameters like credit amounts, clawback rates and eligibility criteria that can be used to reduce an individual's income tax payable. More information on NRTC functionality can be found in the documentation for ``TaxCreditComponent`` and ``TaxCreditSchedule``.
+
+``PITSchedule`` is used by ``TaxationReader`` which is then used to initialize the Central Government agent in the ``macromodel`` package of MacroABM-CA. 
 
 Example:
     ```python
@@ -11,23 +15,20 @@ Example:
     from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
 
     # To pull historical B.C. PIT parameters
-    jurisdiction = "bc"
+    # Note: to pull federal PIT parameters, use "CA"
+    jurisdiction = "BC"
 
-    bc_pit_schedule = PITSchedule.from_csv("path/to/pit/parameters")
+    bc_pit_schedule = PITSchedule.from_csv("path/to/pit/parameters", jurisdiction=jurisdiction)
 
     # View DataFrame containing PIT parameters
     bc_pit_schedule._df
 
     # To load NRTC parameters
-    bc_pit_schedule.load_tax_credits("path/to/pit/credits)
+    bc_pit_schedule.load_tax_credits("path/to/pit/credits", jurisdiction=jurisdiction)
 
     # View dictionary containing NRTC parameters
     bc_pit_schedule._tax_credits.credits
     ```
-
-TODO: add functionality to run simulations past 2026. Include options to do so with the same PIT parameters (i.e., deindexation) or user-input options
-
-TODO: figure out how user specifications are going to work (base/variant)
 """
 
 from __future__ import annotations
@@ -43,13 +44,13 @@ from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import 
     TaxCreditSchedule,
 )
 
-# Required columns in the consolidated rates_thresholds.csv.
+# For this functionality to work as expected, the user must supply a CSV file named "rates_thresholds.csv" that contains the following columns (case-sensitive):
 _REQUIRED_COLS = {
-    "tax_year",  # taxation year the row applies to
+    "tax_year",  # tax parameter year
     "geo",       # jurisdiction key (e.g. "BC")
-    "lower",     # nominal lower income boundary
-    "rate",      # marginal rate for this bracket
-    "index",     # whether the bound is statutorily indexed
+    "lower",     # nominal lower income threshold
+    "rate",      # corresponding marginal tax rate
+    "index",     # whether tax brackets grow with inflation over time (1) or stay the same (0)
 }
 
 logger = logging.getLogger(__name__)
@@ -65,8 +66,7 @@ class PITSchedule:
         tax_credits: Optional["TaxCreditSchedule"] = None,
     ) -> None:
         self._df = df.copy()
-        # Minimum year, not the first row's, so an unsorted CSV does not shift
-        # the base year used by get_brackets.
+        # First year of simulation run
         self._base_year: int = int(self._df["tax_year"].min())
         self._tax_credits: Optional["TaxCreditSchedule"] = tax_credits
 
@@ -76,14 +76,15 @@ class PITSchedule:
         path: str | Path,
         jurisdiction: str,
     ) -> "PITSchedule":
-        """Load bracket definitions from a CSV file.
+        """
+        Load jurisdiction-specific PIT parameters.
 
         Args:
-            path: Path to the CSV file.
-            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
+            path: Name of CSV file containing PIT parameters (``"rates_thresholds.csv"``).
+            jurisdiction: Denotes whether PIT parameters listed are provincial/territorial or federal (e.g., "BC", "CA" for federal, etc.)
 
         Returns:
-            A configured ``PITSchedule`` instance.
+            Configured ``PITSchedule`` instance
         """
         df = pd.read_csv(Path(path))
 
@@ -102,7 +103,7 @@ class PITSchedule:
         df = df[df["geo"].astype(str).str.upper() == geo].copy()
         if df.empty:
             raise ValueError(
-                f"CSV {path} does not contain any rows for geo {geo}"
+                f"CSV {path} does not contain any data for jurisdiction {geo}"
             )
 
         df = df.dropna(subset=["tax_year", "lower", "rate", "index"])
@@ -114,62 +115,29 @@ class PITSchedule:
 
         return cls(df)
 
-    @classmethod
-    def from_name(
-        cls,
-        filename: str,
-        schedule_dir: Path,
-        jurisdiction: str,
-    ) -> "PITSchedule":
-        """Load a schedule by filename from *schedule_dir*.
-
-        Args:
-            filename: Bracket CSV filename (``"rates_thresholds.csv"``).
-            schedule_dir: Directory holding the schedule CSVs — typically
-                ``raw_data_path / "taxation" / "personal_income_tax"``.
-            jurisdiction: Jurisdiction key used when the CSV is geo-keyed.
-        """
-        schedule_dir = Path(schedule_dir)
-        path = schedule_dir / filename
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Schedule file not found: {path}\n"
-                f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
-            )
-        schedule = cls.from_csv(path, jurisdiction=jurisdiction)
-        # Companion credit file, by convention, alongside the bracket file.
-        schedule.load_tax_credits(
-            path.parent / "non_refundable_tax_credits.csv", jurisdiction=jurisdiction
-        )
-        return schedule
-
     def load_tax_credits(
         self,
         credits_path: Optional[Path],
         jurisdiction: str,
     ) -> None:
-        """Attach *jurisdiction*'s non-refundable credits from *credits_path*.
+        """If available, add year- and jurisdiction-specific tax credits to ``PITSchedule``."""
 
-        Both the file and any single jurisdiction's presence within it are
-        optional: a jurisdiction that publishes brackets but no non-refundable
-        credits is a normal state, not an error. Either way the model applies no
-        tax credits for it.
-        """
+        # If path does not exist
         if credits_path is None or not Path(credits_path).exists():
-            logger.debug("No tax-credit file supplied (%s)", credits_path)
+            logger.debug("No tax credit parameter file supplied (%s)", credits_path)
             self._tax_credits = None
             return
 
         credits_path = Path(credits_path)
-        logger.info("Loading tax-credit file: %s", credits_path.name)
+        logger.info("Loading tax credit parameter file: %s", credits_path.name)
         try:
             self._tax_credits = TaxCreditSchedule.from_csv(
                 credits_path, jurisdiction=jurisdiction
             )
         except ValueError:
-            # The file exists but carries no rows for this jurisdiction.
+            # Tax credit parameter file exists but has no data for this jurisdiction.
             logger.debug(
-                "Tax-credit file %s has no rows for %s; no credits applied.",
+                "Tax credit parameter file %s has no data for %s. No tax credits have been applied.",
                 credits_path.name,
                 jurisdiction,
             )
@@ -177,47 +145,42 @@ class PITSchedule:
 
     @property
     def base_year(self) -> int:
-        """The base tax year from the CSV (all bounds are nominal for this year)."""
+        """Simulation start year."""
         return self._base_year
 
     @property
     def available_years(self) -> np.ndarray:
-        """Sorted unique tax years present in the schedule."""
+        """Sorted unique years in PIT parameters."""
         return np.sort(self._df["tax_year"].unique())
 
     @property
     def tax_credits(self) -> Optional["TaxCreditSchedule"]:
-        """Tax credit schedule (multi-component), or ``None`` if not loaded.
+        """
+        Tax credit parameters or ``None`` if not loaded.
 
-        When a companion ``*_tax_credit_*.csv`` file was found alongside
-        the bracket CSV, it is parsed into a ``TaxCreditSchedule``.
-        Otherwise this is ``None`` and no tax credits are applied.
+        When there is a ``*_tax_credit*.csv`` file located in the same directory as PIT parameters, tax credit parameters found within that file are passed into the ``TaxCreditSchedule`` class to be used by ``PITSchedule``. If no file is found, no tax credits are added to ``PITSchedule``.
         """
         return self._tax_credits
 
     def get_brackets(
         self,
         tax_year: int,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Return the published bracket arrays for *tax_year* (statutory lookup).
-
-        A year present in the schedule returns its own published bounds and
-        rates; ``quick_add`` values are recomputed from them. A year not in the
-        schedule raises, since the reader does not project past published years.
-
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """        
+        Return a tuple containing year-specific PIT parameters (upper and lower income thresholds and corresponding marginal tax rates)
+        
         Args:
-            tax_year: The tax year to retrieve.
+            year: Year for which to pull PIT parameters
 
         Returns:
-            Tuple ``(thresholds, rates, lowers, quick_adds)``.
+            Tuple ``(lowers, uppers, rates)``.
 
         Raises:
-            ValueError: If *tax_year* is before the base year, or is not one of
-                the published years.
+            ValueError: If user-specified year is out of bounds.
         """
-        # Bracket order is implied by ascending lower; the first starts at 0.
         years_present = {int(y) for y in self._df["tax_year"].unique()}
 
+        # Pull PIT parameters if data are available (i.e., if user-specified year within bounds) 
         if tax_year in years_present:
             # Filter to this year's rows only; never sort across all years.
             year_df = self._df[self._df["tax_year"] == tax_year].sort_values("lower")
@@ -235,43 +198,29 @@ class PITSchedule:
                 f"add an explicit row for {tax_year} to the schedule CSV."
             )
 
-        quick_adds = _recompute_quick_add(lowers, rates)
+        # Array of upper thresholds = lower thresholds (minus lowest lower bound i.e., 0) and np.inf (i.e., upper bound of highest tax bracket)
         thresholds = np.append(lowers[1:].copy(), np.inf)
 
-        return thresholds, rates, lowers, quick_adds
+        return lowers, thresholds, rates
 
-# TODO: rename to compute_pit
 def compute_progressive_tax(
     incomes: np.ndarray,
     thresholds: np.ndarray,
     rates: np.ndarray,
 ) -> np.ndarray:
     """
-    Compute personal income tax (PIT) payable using a progressive tax system.
-
-    Method 1: Compute individual income tax payable as a piecewise function
+    Compute personal income tax (PIT) payable using a progressive tax schedule.
     
-    Each portion of an individual's income in different tax brackets (each  defined by a lower and upper threshold) is taxed at corresponding marginal tax rates. Here, an individual's income tax payable is calculated by computing a piecewise function.  
-
-    # TODO: write equation to explain what's going on
+    Each portion of an individual's income in different tax brackets (each defined by a lower and upper threshold) is taxed at corresponding marginal tax rates that increase for income exceeding pre-defined thresholds.
     
-    # TODO: put the following 2 lines into comments above relevant lines of code
-    Income in each tax bracket [lower threshold, upper threshold] is taxed at corresponding marginal tax rates.  Income exactly equal to a boundary is assigned
-    to the **lower** bracket.  The last threshold should be
-    ``np.inf`` to capture all remaining income.
-
-    # NOTE: need to know what "n" or "k" are. If not necessary, don't need to include. I have rewritten the following
-    # TODO: 
     Args:
         incomes: array of individual-level incomes
-        thresholds: Shape (k,) — bracket *upper* bounds.  Must be
-            strictly increasing; last entry conventionally ``np.inf``.
-        rates: Shape (k,) — marginal tax rate for each bracket [0, 1].
+        uppers: array of tax bracket upper thresholds (strictly increasing, ending in ``np.inf``)
+        rates: array of marginal tax rates corresponding to each tax bracket [0.0, 1.0].
 
     Returns:
-        Shape (n,) — income tax owed by individual.
+        array of individual-level income tax payable amounts
     """
-    #TODO: explanatory comment
     _validate_brackets(thresholds, rates)
 
     tax = np.zeros_like(incomes, dtype=float)
@@ -282,56 +231,22 @@ def compute_progressive_tax(
         lower = threshold
     return tax
 
-# TODO: test speed diff between compute_progressive_tax and compute_progressive_tax_quick
-# TODO: rename to compute_pit_quick
-def compute_progressive_tax_quick(
-    incomes: np.ndarray,
-    lowers: np.ndarray,
-    rates: np.ndarray,
-    quick_adds: np.ndarray,
-) -> np.ndarray:
-    """Compute progressive tax using pre-computed cumulative quick-add values.
-
-    For each income *x*, find the highest bracket *b* where
-    ``x >= lowers[b]``, then::
-
-        tax = quick_adds[b] + rates[b] * (x - lowers[b])
-
-    Args:
-        incomes: Shape (n,) — taxable income per individual.
-        lowers: Shape (k,) — lower income boundary of each bracket.
-        rates: Shape (k,) — marginal rate for each bracket.
-        quick_adds: Shape (k,) — cumulative tax from all brackets
-            below the current one.
-
-    Returns:
-        Shape (n,) — tax owed per individual.
-    """
-    if not (len(lowers) == len(rates) == len(quick_adds)):
-        raise ValueError(
-            "lowers, rates, and quick_adds must have the same length"
-        )
-
-    bracket_idx = np.searchsorted(lowers, incomes, side="right") - 1
-    bracket_idx = np.clip(bracket_idx, 0, len(lowers) - 1)
-
-    tax = quick_adds[bracket_idx] + rates[bracket_idx] * (
-        incomes - lowers[bracket_idx]
-    )
-    return np.maximum(tax, 0.0)
-
     def compute_tax(
         self,
         incomes: np.ndarray,
         tax_year: int,
     ) -> np.ndarray:
-        """Compute progressive tax for a given year (convenience wrapper)."""
+        """Compute personal income tax for a given year (convenience wrapper)."""
         thresholds, rates, _, _ = self.get_brackets(tax_year)
         return compute_progressive_tax(incomes, thresholds, rates)
 
-
 def _validate_brackets(thresholds: np.ndarray, rates: np.ndarray) -> None:
-    """Check threshold / rate invariants."""
+    """
+    Ensure that:
+    1. Each tax bracket has a corresponding marginal tax rate,
+    2. Upper thresholds of tax brackets are strictly increasing, and
+    3. Tax rates are in [0.0, 1.0]
+    """
     if len(thresholds) != len(rates):
         raise ValueError(
             f"thresholds and rates must have the same length, "
@@ -341,17 +256,4 @@ def _validate_brackets(thresholds: np.ndarray, rates: np.ndarray) -> None:
         raise ValueError("thresholds must be strictly increasing")
     if np.any(rates < 0) or np.any(rates > 1):
         raise ValueError("rates must be in [0, 1]")
-
-
-def _recompute_quick_add(
-    lowers: np.ndarray,
-    rates: np.ndarray,
-) -> np.ndarray:
-    """Recompute quick-add values from lowers and rates."""
-    quick = np.zeros(len(lowers), dtype=float)
-    for i in range(1, len(lowers)):
-        quick[i] = quick[i - 1] + rates[i - 1] * (
-            lowers[i] - lowers[i - 1]
-        )
-    return quick
 
