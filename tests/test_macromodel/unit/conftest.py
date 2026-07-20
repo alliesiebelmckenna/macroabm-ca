@@ -185,7 +185,7 @@ def test_central_government_pit(datawrapper, test_individuals):
     country = datawrapper.synthetic_countries["FRA"]
     synthetic_central_government = country.central_government
 
-    # BC-like progressive brackets: (threshold, rate) in agent-level units
+    # BC-like progressive brackets: (upper, rate) in agent-level units
     pit_config = CentralGovernmentConfiguration(
         pit_brackets=[
             (37606, 0.0506),
@@ -233,7 +233,7 @@ def test_central_government_pit_full(datawrapper, test_individuals):
             (150000, 0.147),
             (float("inf"), 0.168),
         ],
-        pit_tax_credits=[
+        pit_non_refundable_tax_credits=[
             TaxCreditDef(credit="Personal Amount", amount=9869.0),
         ],
     )

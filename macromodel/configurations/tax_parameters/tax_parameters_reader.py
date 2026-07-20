@@ -7,7 +7,7 @@ mirroring the ``read_country_conf`` pattern (read a YAML block, apply it via
 
 Scope is scalars only. Progressive bracket, tax-credit amount, and dividend
 rate schedules live in their own CSV files and are read by ``PITSchedule`` /
-``TaxCreditSchedule`` / ``DividendTaxCreditSchedule``. To enforce that boundary,
+``NRTCSchedule`` / ``DividendTaxCreditSchedule``. To enforce that boundary,
 ``read_tax_parameters`` rejects any schedule field appearing in the YAML.
 """
 
@@ -51,7 +51,7 @@ _ALLOWED_FIELDS = frozenset(
 _SCHEDULE_FIELDS = frozenset(
     {
         "pit_brackets",
-        "pit_tax_credits",
+        "pit_non_refundable_tax_credits",
         "dividend_eligible_gross_up",
         "dividend_non_eligible_gross_up",
         "dividend_eligible_dtc_rate",
@@ -201,7 +201,7 @@ def apply_tax_parameters(
 ) -> CentralGovernmentConfiguration:
     """Return a copy of *configuration* with the scalar tax parameters applied.
 
-    The schedule fields (``pit_brackets``, ``pit_tax_credits``) on
+    The schedule fields (``pit_brackets``, ``pit_non_refundable_tax_credits``) on
     *configuration* are left untouched -- only the scalar fields listed in the
     YAML block are overridden.
 

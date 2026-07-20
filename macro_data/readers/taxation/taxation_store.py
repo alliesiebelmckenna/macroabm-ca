@@ -12,7 +12,7 @@ The per-country slice is a ``TaxationReader``: one jurisdiction's schedules, the
 object that crosses the pickle boundary on ``SyntheticCountry.taxation`` and is
 consumed by the macromodel's central-government builder.
 
-Jurisdictions are discovered from the bracket file's ``geo`` column rather than
+Jurisdictions are discovered from the bracket file's ``jurisdiction`` column rather than
 hardcoded, so extending the data to new provinces or to the federal authority
 needs no code change here. A country the data does not cover yields ``None`` —
 it falls back to the flat Income Tax rate, which is the correct treatment for a
@@ -50,7 +50,7 @@ class TaxationStore:
     Attributes:
         paths: The schedule files this store reads.
         jurisdictions: Authority keys the data covers, from the bracket file's
-            ``geo`` column (lowercased). This set — not any filename — is what
+            ``jurisdiction`` column (lowercased). This set — not any filename — is what
             decides which governments can run a progressive PIT.
     """
 
@@ -70,8 +70,8 @@ class TaxationStore:
         if not Path(paths.rates).exists():
             raise FileNotFoundError(f"Schedule file not found: {paths.rates}")
 
-        geos = pd.read_csv(paths.rates, usecols=["geo"])["geo"]
-        jurisdictions = frozenset(str(g).strip().lower() for g in geos.dropna().unique())
+        jurisdiction_col = pd.read_csv(paths.rates, usecols=["jurisdiction"])["jurisdiction"]
+        jurisdictions = frozenset(str(g).strip().lower() for g in jurisdiction_col.dropna().unique())
 
         return cls(paths=paths, jurisdictions=jurisdictions)
 
@@ -98,11 +98,11 @@ class TaxationStore:
         the flat Income Tax rate. Readers are cached, so a 10-province build
         parses each jurisdiction once.
         """
-        geo = jurisdiction_of(country)
-        if geo not in self.jurisdictions:
+        juris = jurisdiction_of(country)
+        if juris not in self.jurisdictions:
             return None
-        if geo not in self._cache:
-            self._cache[geo] = TaxationReader.from_paths(
-                self.paths, jurisdiction=geo
+        if juris not in self._cache:
+            self._cache[juris] = TaxationReader.from_paths(
+                self.paths, jurisdiction=juris
             )
-        return self._cache[geo]
+        return self._cache[juris]

@@ -72,8 +72,8 @@ def test_each_country_gets_a_distinct_schedule(tmp_path):
     rates = pd.read_csv(rates_path)
     ab = pd.DataFrame(
         [
-            {"tax_year": y, "geo": "AB", "lower": 0.0, "rate": 0.10, "index": 0}
-            for y in sorted(rates["tax_year"].unique())
+            {"year": y, "jurisdiction": "AB", "lower": 0.0, "rate": 0.10, "index": 0}
+            for y in sorted(rates["year"].unique())
         ]
     )
     pd.concat([rates, ab], ignore_index=True).to_csv(rates_path, index=False)
@@ -84,8 +84,8 @@ def test_each_country_gets_a_distinct_schedule(tmp_path):
     assert bc is not None and alberta is not None
     assert bc.jurisdiction == "bc" and alberta.jurisdiction == "ab"
 
-    _th_bc, rates_bc, _lo_bc, _q_bc = bc.pit_schedule.get_brackets(2014)
-    _th_ab, rates_ab, _lo_ab, _q_ab = alberta.pit_schedule.get_brackets(2014)
+    _lo_bc, _th_bc, rates_bc = bc.pit_schedule.get_brackets(2014)
+    _lo_ab, _th_ab, rates_ab = alberta.pit_schedule.get_brackets(2014)
 
     # Alberta's flat 10% must not be BC's progressive ladder.
     assert list(rates_ab) == [0.10]
@@ -95,7 +95,7 @@ def test_each_country_gets_a_distinct_schedule(tmp_path):
 def test_the_data_file_decides_who_is_taxed_progressively(tmp_path):
     """The SAME code, pointed at two different bracket files, taxes different provinces.
 
-    The reader is not tied to a filename, only to the geo-keyed schema: a bracket
+    The reader is not tied to a filename, only to the jurisdiction-keyed schema: a bracket
     file covering BC alone activates progressive PIT for BC and leaves the rest
     flat; one covering every province activates them all. Nothing but the data
     changes.
@@ -108,9 +108,9 @@ def test_the_data_file_decides_who_is_taxed_progressively(tmp_path):
     rates = pd.read_csv(pit_dir / "rates_thresholds.csv")
     extra = pd.DataFrame(
         [
-            {"tax_year": y, "geo": geo, "lower": 0.0, "rate": rate, "index": 0}
-            for geo, rate in (("ON", 0.0505), ("QC", 0.15))
-            for y in sorted(rates["tax_year"].unique())
+            {"year": y, "jurisdiction": juris, "lower": 0.0, "rate": rate, "index": 0}
+            for juris, rate in (("ON", 0.0505), ("QC", 0.15))
+            for y in sorted(rates["year"].unique())
         ]
     )
     pd.concat([rates, extra], ignore_index=True).to_csv(
@@ -144,8 +144,8 @@ def test_missing_dividend_rows_degrade_rather_than_raise(tmp_path):
     rates = pd.read_csv(rates_path)
     sk = pd.DataFrame(
         [
-            {"tax_year": y, "geo": "SK", "lower": 0.0, "rate": 0.11, "index": 0}
-            for y in sorted(rates["tax_year"].unique())
+            {"year": y, "jurisdiction": "SK", "lower": 0.0, "rate": 0.11, "index": 0}
+            for y in sorted(rates["year"].unique())
         ]
     )
     pd.concat([rates, sk], ignore_index=True).to_csv(rates_path, index=False)

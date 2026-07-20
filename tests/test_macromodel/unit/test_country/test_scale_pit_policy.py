@@ -44,7 +44,7 @@ def _pit_config(**overrides) -> CentralGovernmentConfiguration:
     base = dict(
         activate_progressive_pit=True,
         pit_brackets=[(37606.0, 0.0506), (75213.0, 0.0770), (float("inf"), 0.1050)],
-        pit_tax_credits=[
+        pit_non_refundable_tax_credits=[
             TaxCreditDef(credit="Personal Amount", amount=9869.0),
             TaxCreditDef(
                 credit="Age Amount",
@@ -87,8 +87,8 @@ class TestScalingHomogeneity:
         config = _pit_config()
         scaled = _scale_pit_policy(config, SCALE)
 
-        defs_per_person = pit_credit_defs_to_state_dicts(config.pit_tax_credits)
-        defs_agent = pit_credit_defs_to_state_dicts(scaled.pit_tax_credits)
+        defs_per_person = pit_credit_defs_to_state_dicts(config.pit_non_refundable_tax_credits)
+        defs_agent = pit_credit_defs_to_state_dicts(scaled.pit_non_refundable_tax_credits)
 
         incomes = np.array([40000.0, 20000.0])  # senior in-band, non-senior
         ages = np.array([70.0, 40.0])
@@ -108,14 +108,14 @@ class TestScalingHomogeneity:
 
 # Per-year schedule table: identical conversion for every year
 
-_PIT_HISTORICAL = """tax_year,geo,lower,rate,index
+_PIT_HISTORICAL = """year,jurisdiction,lower,rate,index
 2014,BC,0,0.0506,1
 2014,BC,37606,0.0770,1
 2016,BC,0,0.0600,1
 2016,BC,40000,0.0770,1
 """
 
-_TAX_CREDITS = """tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index
+_TAX_CREDITS = """year,jurisdiction,credit,amount,top,rate,clawback,clawback_rate,index
 2014,BC,Personal Amount,9869,,,,,1
 2014,BC,Age Amount,4426,62450,,32943,,1
 2016,BC,Personal Amount,10027,,,,,1

@@ -21,7 +21,7 @@ BC_SCHEDULE_DIR = (
 _FILENAME = "dividend_tax_credit_schedule.csv"
 
 
-# from_name — the packaged BC schedule (geo-keyed, per-year rows)
+# from_name — the packaged BC schedule (jurisdiction-keyed, per-year rows)
 
 
 class TestPackagedSchedule:
@@ -45,8 +45,8 @@ class TestPackagedSchedule:
         with pytest.raises(ValueError, match="tax year 2013"):
             self._load().get_rates(2013, "eligible")
 
-    def test_federal_ca_rows_geo_filter(self):
-        """The packaged file also carries federal (CA) rows, selected by geo."""
+    def test_federal_ca_rows_jurisdiction_filter(self):
+        """The packaged file also carries federal (CA) rows, selected by jurisdiction."""
         ca = DividendTaxCreditSchedule.from_name(
             _FILENAME, schedule_dir=BC_SCHEDULE_DIR, jurisdiction="ca"
         )
@@ -69,7 +69,7 @@ def _write_csv(content: str) -> str:
         return f.name
 
 
-_HEADER = "tax_year,geo,dividend_type,gross_up_rate,dtc_pct_of_grossed_up,dtc_pct_of_actual"
+_HEADER = "year,jurisdiction,dividend_type,gross_up_rate,dtc_pct_of_grossed_up,dtc_pct_of_actual"
 
 
 class TestFromCsv:

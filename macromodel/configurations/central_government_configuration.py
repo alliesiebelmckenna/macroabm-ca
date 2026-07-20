@@ -121,7 +121,7 @@ class CentralGovernmentConfiguration(BaseModel):
         "None means use the flat Income Tax rate.",
     )
 
-    pit_tax_credits: Optional[list[TaxCreditDef]] = Field(
+    pit_non_refundable_tax_credits: Optional[list[TaxCreditDef]] = Field(
         default=None,
         description="List of non-refundable tax credits with eligibility rules. "
         "None means no credits applied.",

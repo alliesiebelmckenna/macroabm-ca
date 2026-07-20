@@ -46,16 +46,16 @@ def _make_taxation_tree(root: Path, *, with_schedules: bool) -> Path:
 class TestTaxationReader:
     def test_from_dir_loads_schedules(self):
         reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
-        assert reader.pit_schedule.base_year == 2014
-        assert reader.pit_schedule.tax_credits is not None
+        assert reader.pit_schedule.start_year == 2014
+        assert reader.pit_schedule.non_refundable_tax_credits is not None
         assert reader.dividend_schedule is not None
 
-    def test_from_dir_prefers_consolidated_geo_format(self):
+    def test_from_dir_prefers_consolidated_jurisdiction_format(self):
         reader = TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
-        _, rates, lower_bounds, _ = reader.pit_schedule.get_brackets(2015)
+        lower_bounds, _, rates = reader.pit_schedule.get_brackets(2015)
         assert np.allclose(lower_bounds, [0, 37869, 75740, 86958, 105592, 151050])
         assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
-        credits = reader.pit_schedule.tax_credits.get_credits(2014)
+        credits = reader.pit_schedule.non_refundable_tax_credits.get_credits(2014)
         assert any(c.credit == "Personal Amount" and c.amount == pytest.approx(9869) for c in credits)
 
     def test_dividend_schedule_optional(self, tmp_path):
@@ -98,7 +98,7 @@ class TestLoadTaxationReader:
 
         reader = store.for_country("CAN_BC")
         assert isinstance(reader, TaxationReader)
-        assert reader.pit_schedule.base_year == 2014
+        assert reader.pit_schedule.start_year == 2014
         assert reader.dividend_schedule is not None
 
 
@@ -128,7 +128,7 @@ class TestDataPathsTaxationWiring:
 
         reader = store.for_country("CAN_BC")
         assert isinstance(reader, TaxationReader)
-        assert reader.pit_schedule.base_year == 2014
+        assert reader.pit_schedule.start_year == 2014
         assert reader.dividend_schedule is not None
 
     def test_default_paths_no_taxation_tree_is_none(self, tmp_path):
@@ -138,7 +138,7 @@ class TestDataPathsTaxationWiring:
         assert _load_taxation_reader(datapaths.taxation_path) is None
 
 
-_ON_RATES_THRESHOLDS = """tax_year,geo,lower,rate,index
+_ON_RATES_THRESHOLDS = """year,jurisdiction,lower,rate,index
 2014,ON,0.0,0.0505,1
 2014,ON,43906.0,0.0915,1
 2014,BC,0.0,0.0506,1
@@ -147,7 +147,7 @@ _ON_RATES_THRESHOLDS = """tax_year,geo,lower,rate,index
 
 
 class TestGeoFilteredBrackets:
-    """Bracket rows are geo-filtered — another jurisdiction's rows in the same
+    """Bracket rows are jurisdiction-filtered — another jurisdiction's rows in the same
     consolidated CSV must never be read silently."""
 
     def test_brackets_filtered_by_jurisdiction(self, tmp_path):
@@ -156,7 +156,7 @@ class TestGeoFilteredBrackets:
         reader = TaxationReader.from_dir(tmp_path, jurisdiction="on")
         assert reader.jurisdiction == "on"
         # ON's two brackets only, never a mix with the BC rows in the same file.
-        _, rates, lower_bounds, _ = reader.pit_schedule.get_brackets(2014)
+        lower_bounds, _, rates = reader.pit_schedule.get_brackets(2014)
         assert np.allclose(lower_bounds, [0.0, 43906.0])
         assert np.allclose(rates, [0.0505, 0.0915])
 

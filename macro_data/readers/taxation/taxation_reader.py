@@ -21,7 +21,7 @@ from macro_data.readers.taxation.personal_income_tax.dividend_tax_credit_schedul
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
 
 
-# Default schedule filenames; jurisdictions live in the geo column. They are
+# Default schedule filenames; jurisdictions live in the jurisdiction column. They are
 # defaults, not requirements: point SchedulePaths at any files with this schema.
 RATES_THRESHOLDS_FILENAME = "rates_thresholds.csv"
 TAX_CREDITS_FILENAME = "non_refundable_tax_credits.csv"
@@ -33,10 +33,10 @@ class SchedulePaths:
     """Which files the taxation schedules are read from.
 
     The reader is not tied to particular filenames — only to the consolidated,
-    geo-keyed schema. Pointing it at a different set of files is how a run
+    jurisdiction-keyed schema. Pointing it at a different set of files is how a run
     chooses its tax data: a bracket file covering only BC activates progressive
     PIT for BC alone, and one covering every province activates them all. The
-    jurisdictions are whatever the ``geo`` column contains.
+    jurisdictions are whatever the ``jurisdiction`` column contains.
 
     Attributes:
         rates: Bracket schedule (required — it defines the covered jurisdictions).
@@ -82,7 +82,7 @@ class TaxationReader:
     Attributes:
         pit_schedule: Progressive bracket schedule (statutory lookup only),
             carrying the companion tax-credit schedule via
-            ``pit_schedule.tax_credits``.
+            ``pit_schedule.non_refundable_tax_credits``.
         dividend_schedule: Dividend gross-up / DTC rate schedule, or ``None``
             when no dividend schedule is present.
         jurisdiction: The taxing-authority key these schedules belong to (e.g.
@@ -105,7 +105,7 @@ class TaxationReader:
 
         Args:
             paths: The schedule files to read.
-            jurisdiction: Jurisdiction key — selects the geo rows read from each
+            jurisdiction: Jurisdiction key — selects the jurisdiction rows read from each
                 consolidated file.
 
         Returns:
@@ -114,7 +114,7 @@ class TaxationReader:
             schedule when the jurisdiction appears in the dividend file.
         """
         pit_schedule = PITSchedule.from_csv(paths.rates, jurisdiction=jurisdiction)
-        pit_schedule.load_tax_credits(paths.credits, jurisdiction=jurisdiction)
+        pit_schedule.load_non_refundable_tax_credits(paths.credits, jurisdiction=jurisdiction)
 
         dividend_schedule: Optional[DividendTaxCreditSchedule] = None
         if paths.dividend is not None:

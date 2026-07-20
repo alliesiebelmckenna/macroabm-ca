@@ -114,7 +114,7 @@ class TestCountry:
         # Caller's config is untouched after repeated construction.
         assert list(country_configuration.central_government.pit_brackets) == original
         # Scale was applied exactly once (not compounded across builds).
-        assert country.central_government.states["pit_thresholds"][0] == 50000.0 * scale
+        assert country.central_government.states["pit_uppers"][0] == 50000.0 * scale
 
     def test_taxation_data_activates_progressive_pit_end_to_end(self, datawrapper):
         """End-to-end: a country carrying taxation data, whose government opts in,
@@ -162,10 +162,10 @@ class TestCountry:
         )
 
         # Progressive PIT is active: the agent carries the BC schedule, with the
-        # first bracket threshold scaled to agent units (37,606 per individual).
+        # first bracket upper scaled to agent units (37,606 per individual).
         states = country.central_government.states
-        assert "pit_thresholds" in states
-        assert states["pit_thresholds"][0] == 37606.0 * scale
+        assert "pit_uppers" in states
+        assert states["pit_uppers"][0] == 37606.0 * scale
         assert states["pit_rates"][0] == 0.0506
         # Dividend integration switched on with the schedule present.
         assert states["pit_dividend_integration"] is True
@@ -204,7 +204,7 @@ class TestCountry:
             running_multiple_countries=False,
             emission_factors_usd=emission_factors,
         )
-        assert "pit_thresholds" not in country.central_government.states
+        assert "pit_uppers" not in country.central_government.states
 
     def test_pit_schedule_update_advances_brackets_end_to_end(self, datawrapper, tmp_path):
         """Integration of the whole indexing chain on a real ``Country``.
@@ -212,14 +212,14 @@ class TestCountry:
         Injects a *multi-year* taxation schedule (a 2016 bottom-rate change), so
         ``Country.from_pickled_country`` builds the per-year schedule table onto
         the real central-government agent.  The real ``pit_schedule_update`` pre-hook is
-        then driven across calendar years and the agent's live ``pit_thresholds``
+        then driven across calendar years and the agent's live ``pit_uppers``
         / ``pit_rates`` are checked to advance (published) and to reject a year
         beyond the last published one — exercising builder → agent states →
         prehook → ``set_pit_for_year`` together, not in isolation.
         """
         # Two published years; 2016 changes the bottom rate.
         (tmp_path / "rates_thresholds.csv").write_text(
-            "tax_year,geo,lower,rate,index\n"
+            "year,jurisdiction,lower,rate,index\n"
             "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
             "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
         )
@@ -271,15 +271,15 @@ class TestCountry:
 
         # 2014 (construction year): the published base brackets, scaled.
         hook(simulation, 2014, 1)
-        thresholds_2014 = cg.states["pit_thresholds"].copy()
-        assert thresholds_2014[0] == pytest.approx(37606.0 * scale)
+        uppers_2014 = cg.states["pit_uppers"].copy()
+        assert uppers_2014[0] == pytest.approx(37606.0 * scale)
         assert cg.states["pit_rates"][0] == pytest.approx(0.0506)
 
         # 2016: brackets and the bottom marginal rate advance to the published
         # 2016 values (a rate change CPI compounding could not express).
         hook(simulation, 2016, 1)
-        thresholds_2016 = cg.states["pit_thresholds"].copy()
-        assert thresholds_2016[0] == pytest.approx(40000.0 * scale)
+        uppers_2016 = cg.states["pit_uppers"].copy()
+        assert uppers_2016[0] == pytest.approx(40000.0 * scale)
         assert cg.states["pit_rates"][0] == pytest.approx(0.0600)
 
         # A year beyond the last published one (2016) is not projectable — the
@@ -288,5 +288,5 @@ class TestCountry:
         with pytest.raises(ValueError, match="exceeds the last available"):
             hook(simulation, 2017, 1)
         # The agent's live state is untouched by the rejected lookup.
-        np.testing.assert_array_equal(cg.states["pit_thresholds"], thresholds_2016)
+        np.testing.assert_array_equal(cg.states["pit_uppers"], uppers_2016)
         assert cg.states["pit_rates"][0] == pytest.approx(0.0600)

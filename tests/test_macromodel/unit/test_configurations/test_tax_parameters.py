@@ -34,10 +34,10 @@ def _committed_reader() -> TaxationReader:
     return TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
 
 
-def _build(jurisdiction: str = "bc", tax_year: int = 2014, **kwargs):
+def _build(jurisdiction: str = "bc", year: int = 2014, **kwargs):
     """Build a BC config from the committed schedules (the common test path)."""
     return build_central_government_configuration(
-        _committed_reader(), jurisdiction, tax_year, **kwargs
+        _committed_reader(), jurisdiction, year, **kwargs
     )
 
 
@@ -93,11 +93,11 @@ class TestBuildCentralGovernmentConfiguration:
 
         config = _build("bc", 2014)
         spousal_amt = next(
-            c.amount for c in config.pit_tax_credits if c.credit == "Spousal Amount"
+            c.amount for c in config.pit_non_refundable_tax_credits if c.credit == "Spousal Amount"
         )
         equiv_amt = next(
             c.amount
-            for c in config.pit_tax_credits
+            for c in config.pit_non_refundable_tax_credits
             if c.credit == "Equivalent To Spouse Amount"
         )
 
@@ -134,7 +134,7 @@ class TestBuildCentralGovernmentConfiguration:
             households_n_adults=np.array([2, 1]),
         )
 
-        all_defs = to_defs(config.pit_tax_credits)
+        all_defs = to_defs(config.pit_non_refundable_tax_credits)
         wo_defs = [
             d
             for d in all_defs
@@ -165,7 +165,7 @@ class TestBuildCentralGovernmentConfiguration:
         projection anywhere in the pipeline, and in production the builder is
         only ever called with published years.  The consolidated fixture
         publishes 2014-2030, so 2099 is out of table."""
-        with pytest.raises(ValueError, match="not in the published schedule"):
+        with pytest.raises(ValueError, match="No PIT data available"):
             _build("bc", 2099)
 
 
@@ -178,15 +178,15 @@ class TestDeferredCreditSafety:
 
     @staticmethod
     def _load_one(kind: str, tmp_path: Path, amount: str = "1000"):
-        from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import (
-            TaxCreditSchedule,
+        from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
+            NRTCSchedule,
         )
         csv = tmp_path / "tc.csv"
         csv.write_text(
-            "tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index\n"
+            "year,jurisdiction,credit,amount,top,rate,clawback,clawback_rate,index\n"
             f"2014,BC,{kind},{amount},,0.0506,,,1\n"
         )
-        return TaxCreditSchedule.from_csv(csv, jurisdiction="bc").credits[0]
+        return NRTCSchedule.from_csv(csv, jurisdiction="bc").credits[0]
 
 
     def test_unknown_kind_dropped_by_builder(self, tmp_path):
@@ -228,7 +228,7 @@ class TestActivateTaxation:
 
     def test_opted_in_with_reader_builds_progressive(self):
         base = CentralGovernmentConfiguration(activate_progressive_pit=True)
-        config = activate_taxation(base, _committed_reader(), tax_year=2014)
+        config = activate_taxation(base, _committed_reader(), year=2014)
         assert config is not base  # a new, progressive config
         assert config.pit_brackets[0] == (37606.0, 0.0506)
         assert config.pit_dividend_integration is True
@@ -236,7 +236,7 @@ class TestActivateTaxation:
     def test_not_opted_in_returns_base_unchanged(self):
         """Reader present but the government did not opt in ⇒ flat parity."""
         base = CentralGovernmentConfiguration(activate_progressive_pit=False)
-        config = activate_taxation(base, _committed_reader(), tax_year=2014)
+        config = activate_taxation(base, _committed_reader(), year=2014)
         assert config is base
         assert config.pit_brackets is None
 

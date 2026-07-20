@@ -1,8 +1,7 @@
 """Unit tests for the Progressive Personal Income Tax (PIT) schedule.
 
 Covers:
-- Pure-function tax computation (``compute_progressive_tax``,
-  ``compute_progressive_tax_quick``)
+- Pure-function tax computation (``compute_personal_income_tax``)
 - Bracket validation (``_validate_brackets``)
 - ``PITSchedule`` class: CSV loading, CPI indexing, error handling
 """
@@ -15,9 +14,7 @@ import pytest
 
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import (
     PITSchedule,
-    compute_progressive_tax,
-    compute_progressive_tax_quick,
-    _recompute_quick_add,
+    compute_personal_income_tax,
     _validate_brackets,
 )
 
@@ -34,34 +31,10 @@ BC_SCHEDULE_DIR = (
 
 
 @pytest.fixture(scope="module")
-def bc_2014_rates() -> np.ndarray:
-    """Real BC 2014 marginal rates (6 brackets)."""
-    return np.array([0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
-
-
-@pytest.fixture(scope="module")
-def bc_2014_lower_bounds() -> np.ndarray:
-    """Real BC 2014 lower bounds (6 brackets)."""
-    return np.array([0, 37606, 75213, 86354, 104858, 150000], dtype=float)
-
-
-@pytest.fixture(scope="module")
-def bc_2014_thresholds(bc_2014_lower_bounds) -> np.ndarray:
-    """Real BC 2014 upper-bound thresholds (6 brackets, last = inf)."""
-    return np.append(bc_2014_lower_bounds[1:].copy(), np.inf)
-
-
-@pytest.fixture(scope="module")
-def bc_2014_quick_adds(bc_2014_lower_bounds, bc_2014_rates) -> np.ndarray:
-    """Pre-computed quick-add values for BC 2014 brackets."""
-    return _recompute_quick_add(bc_2014_lower_bounds, bc_2014_rates)
-
-
-@pytest.fixture(scope="module")
 def sample_csv_path() -> Path:
     """Write a minimal 2-bracket PIT CSV to a temp file."""
     csv_content = (
-        "tax_year,geo,lower,rate,index\n"
+        "year,jurisdiction,lower,rate,index\n"
         "2020,BC,0,0.10,1\n"
         "2020,BC,50000,0.25,1\n"
     )
@@ -72,7 +45,7 @@ def sample_csv_path() -> Path:
         return Path(f.name)
 
 
-# 1. compute_progressive_tax — pure-function tests
+# 1. compute_personal_income_tax — pure-function tests
 
 
 class TestComputeProgressiveTax:
@@ -82,9 +55,9 @@ class TestComputeProgressiveTax:
     def test_two_brackets_marginal_slicing(self):
         """Income spans two brackets — each slice taxed at its own rate."""
         incomes = np.array([30.0, 80.0, 200.0])
-        thresholds = np.array([50.0, np.inf])
+        uppers = np.array([50.0, np.inf])
         rates = np.array([0.10, 0.25])
-        tax = compute_progressive_tax(incomes, thresholds, rates)
+        tax = compute_personal_income_tax(incomes, uppers, rates)
         # 30  → 30×0.10 = 3
         # 80  → 50×0.10 + 30×0.25 = 5 + 7.5 = 12.5
         # 200 → 50×0.10 + 150×0.25 = 5 + 37.5 = 42.5
@@ -96,41 +69,15 @@ class TestComputeProgressiveTax:
 
 
 
-# 2. compute_progressive_tax_quick — fast-path tests
-
-
-class TestComputeProgressiveTaxQuick:
-    """Optimised quick-add path must match the slow path exactly."""
-
-    def test_matches_slow_path_bc_brackets(
-        self,
-        bc_2014_thresholds,
-        bc_2014_rates,
-        bc_2014_lower_bounds,
-        bc_2014_quick_adds,
-    ):
-        """BC 2014 brackets: slow and fast agree on 1 000 random incomes."""
-        rng = np.random.default_rng(42)
-        incomes = rng.uniform(0, 500_000, size=1000)
-        slow = compute_progressive_tax(incomes, bc_2014_thresholds, bc_2014_rates)
-        fast = compute_progressive_tax_quick(
-            incomes, bc_2014_lower_bounds, bc_2014_rates, bc_2014_quick_adds
-        )
-        assert np.allclose(slow, fast, atol=1e-10)
-
-
-
-
-
-# 3. _validate_brackets — input validation
+# 2. _validate_brackets — input validation
 
 
 class TestValidateBrackets:
     """Input validation for bracket arrays."""
 
 
-    def test_non_increasing_thresholds_raises(self):
-        """Non-strictly-increasing thresholds raise."""
+    def test_non_increasing_uppers_raises(self):
+        """Non-strictly-increasing uppers raise."""
         with pytest.raises(ValueError, match="strictly increasing"):
             _validate_brackets(
                 np.array([100.0, 50.0]), np.array([0.1, 0.2])
@@ -140,34 +87,28 @@ class TestValidateBrackets:
 
 
 
-# 4. _recompute_quick_add — helper
-
-
-
-
-# 5. PITSchedule — class-level tests
+# 3. PITSchedule — class-level tests
 
 
 class TestPITSchedule:
     """Integration tests for the PITSchedule class."""
 
-    def test_from_name_loads_bc_2014(self):
+    def test_from_csv_loads_bc_2014(self):
         """The consolidated file loads BC 2014 with 6 brackets."""
-        schedule = PITSchedule.from_name(
-            "rates_thresholds.csv", schedule_dir=BC_SCHEDULE_DIR, jurisdiction="bc"
+        schedule = PITSchedule.from_csv(
+            BC_SCHEDULE_DIR / "rates_thresholds.csv", jurisdiction="bc"
         )
-        assert schedule.base_year == 2014
-        thresholds, rates, lower_bounds, quick_adds = schedule.get_brackets(
-            tax_year=2014
+        assert schedule.start_year == 2014
+        lower_bounds, uppers, rates = schedule.get_brackets(
+            year=2014
         )
-        assert len(thresholds) == 6
+        assert len(uppers) == 6
         assert len(rates) == 6
         assert len(lower_bounds) == 6
-        assert len(quick_adds) == 6
         # First bracket starts at 0
         assert lower_bounds[0] == 0.0
-        # Last threshold is inf
-        assert np.isinf(thresholds[-1])
+        # Last upper is inf
+        assert np.isinf(uppers[-1])
         # Rates match expected BC 2014 values
         assert np.allclose(
             rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168]
@@ -179,19 +120,18 @@ class TestPITSchedule:
     def test_get_brackets_out_of_table_raises(self):
         """A year past the published schedule raises (the reader is lookup-only;
         there is no forward projection anywhere in the pipeline)."""
-        schedule = PITSchedule.from_name(
-            "rates_thresholds.csv",
-            schedule_dir=BC_SCHEDULE_DIR,
+        schedule = PITSchedule.from_csv(
+            BC_SCHEDULE_DIR / "rates_thresholds.csv",
             jurisdiction="bc",
         )
         # The consolidated fixture publishes 2014-2030, so a far-future year is
         # out of table and raises.
-        with pytest.raises(ValueError, match="not in the published schedule"):
-            schedule.get_brackets(tax_year=2099)
+        with pytest.raises(ValueError, match="No PIT data available"):
+            schedule.get_brackets(year=2099)
 
     def test_from_csv_missing_columns_raises(self):
         """CSV missing required columns raises ValueError."""
-        csv = "tax_year,lower\n2020,0\n"
+        csv = "year,lower\n2020,0\n"
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False
         ) as f:
@@ -227,7 +167,7 @@ class TestStatutoryLookup:
         # changes rates, so a correct rate can only come from lookup.
         p = tmp_path / "multi.csv"
         p.write_text(
-            "tax_year,geo,lower,rate,index\n"
+            "year,jurisdiction,lower,rate,index\n"
             "2014,BC,0,0.05,1\n"
             "2014,BC,40000,0.10,1\n"
             "2015,BC,0,0.05,1\n"
@@ -242,7 +182,7 @@ class TestStatutoryLookup:
         """2016's bottom/top rates (0.06/0.11) differ from 2014's (0.05/0.10);
         compounding can't produce them — only a per-year lookup can."""
         sched = PITSchedule.from_csv(self._multiyear_csv(tmp_path), jurisdiction="bc")
-        _, rates, lower_bounds, _ = sched.get_brackets(tax_year=2016)
+        lower_bounds, _, rates = sched.get_brackets(year=2016)
         assert np.allclose(lower_bounds, [0.0, 42000.0])
         assert np.allclose(rates, [0.06, 0.11])
 

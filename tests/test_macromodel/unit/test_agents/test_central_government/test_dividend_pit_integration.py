@@ -105,7 +105,7 @@ class TestBankDividendCountryWiring:
     def test_bank_profits_to_pit_revenue(self, test_individuals, datawrapper):
         """Full chain from bank profits to PIT revenue matches the reviewer's formula."""
         from macro_data.readers.taxation.personal_income_tax.pit_schedule import (
-            compute_progressive_tax,
+            compute_personal_income_tax,
         )
 
         ind = test_individuals
@@ -130,7 +130,7 @@ class TestBankDividendCountryWiring:
 
         emp_income = np.array([0.0])  # no wage income — isolates the dividend path
         taxable = emp_income * (1.0 - si_rate) + grossed_up
-        pit_gross = compute_progressive_tax(taxable, cg.states["pit_thresholds"], cg.states["pit_rates"])
+        pit_gross = compute_personal_income_tax(taxable, cg.states["pit_uppers"], cg.states["pit_rates"])
         expected_revenue = float(np.maximum(0.0, pit_gross - dtc).sum())
 
         cg.compute_taxes(

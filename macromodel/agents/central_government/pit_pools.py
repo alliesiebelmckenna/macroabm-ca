@@ -145,7 +145,7 @@ def build_credit_base_pool(
     """Pool B: summed non-refundable tax-credit base per individual.
 
     ``credit_defs`` are the credit definitions owned by the government agent
-    (``states["pit_tax_credits"]``), each a dict with ``credit``, ``amount`` and
+    (``states["pit_non_refundable_tax_credits"]``), each a dict with ``credit``, ``amount`` and
     optional eligibility keys. The agent later values this base at the bottom
     marginal rate and subtracts it from gross tax, floored at zero. To add a new
     credit, add a branch in ``_credit_amount``.

@@ -1,4 +1,4 @@
-tax_year,geo,lower,rate,index
+year,jurisdiction,lower,rate,index
 2014,BC,0.0,0.0506,1.0
 2014,BC,37606.0,0.077,1.0
 2014,BC,75213.0,0.105,1.0

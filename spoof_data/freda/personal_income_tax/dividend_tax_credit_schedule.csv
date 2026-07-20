@@ -1,4 +1,4 @@
-tax_year,geo,dividend_type,gross_up_rate,dtc_pct_of_grossed_up,dtc_pct_of_actual
+year,jurisdiction,dividend_type,gross_up_rate,dtc_pct_of_grossed_up,dtc_pct_of_actual
 2014,CA,eligible,0.38,0.150198,0.2073
 2014,CA,non_eligible,0.18,0.110169,0.13
 2015,CA,eligible,0.38,0.150198,0.2073

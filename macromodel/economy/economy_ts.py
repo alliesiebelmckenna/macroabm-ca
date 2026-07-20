@@ -300,10 +300,6 @@ def create_economy_timeseries(
         ts["imports_from_" + c] = initial_imports_by_country[c]
 
     # GDP sanity check
-    # Provincial reader data may have larger calibration gaps than
-    # country-level data; use a wider tolerance to avoid blocking
-    # provincial simulations.
-    _GDP_TOLERANCE = 0.40
 
     current_output = ts.current("gdp_output")[0]
     current_expenditure = ts.current("gdp_expenditure")[0]

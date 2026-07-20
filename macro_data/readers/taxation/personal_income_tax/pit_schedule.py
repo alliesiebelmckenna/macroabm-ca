@@ -5,7 +5,7 @@ This module produces the ``PITSchedule`` class, which reads, processes and store
 
 A tax is "progressive" if an individual's income in higher tax brackets (i.e., exceeding certain thresholds) is taxed at a higher marginal rate than their income in lower brackets, such that their average tax rate is less than the marginal tax rate corresponding to their income. "Jurisdictions" here refer to whether taxes are provincial, territorial, or federal.
 
-If supplied, ``PITSchedule`` also incorporates year- and jurisdiction-specific non-refundable tax credit (NRTC) parameters like credit amounts, clawback rates and eligibility criteria that can be used to reduce an individual's income tax payable. More information on NRTC functionality can be found in the documentation for ``TaxCreditComponent`` and ``TaxCreditSchedule``.
+If supplied, ``PITSchedule`` also incorporates year- and jurisdiction-specific non-refundable tax credit (NRTC) parameters like credit amounts, clawback rates and eligibility criteria that can be used to reduce an individual's income tax payable. More information on NRTC functionality can be found in the documentation for ``TaxCreditComponent`` and ``NRTCSchedule``.
 
 ``PITSchedule`` is used by ``TaxationReader`` which is then used to initialize the Central Government agent in the ``macromodel`` package of MacroABM-CA. 
 
@@ -24,10 +24,10 @@ Example:
     bc_pit_schedule._df
 
     # To load NRTC parameters
-    bc_pit_schedule.load_tax_credits("path/to/pit/credits", jurisdiction=jurisdiction)
+    bc_pit_schedule.load_non_refundable_tax_credits("path/to/pit/credits", jurisdiction=jurisdiction)
 
     # View dictionary containing NRTC parameters
-    bc_pit_schedule._tax_credits.credits
+    bc_pit_schedule._non_refundable_tax_credits.credits
     ```
 """
 
@@ -40,14 +40,14 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import (
-    TaxCreditSchedule,
+from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
+    NRTCSchedule,
 )
 
 # For this functionality to work as expected, the user must supply a CSV file named "rates_thresholds.csv" that contains the following columns (case-sensitive):
 _REQUIRED_COLS = {
-    "tax_year",  # tax parameter year
-    "geo",       # jurisdiction key (e.g. "BC")
+    "year",  # tax parameter year
+    "jurisdiction",  # jurisdiction key (e.g. "BC")
     "lower",     # nominal lower income threshold
     "rate",      # corresponding marginal tax rate
     "index",     # whether tax brackets grow with inflation over time (1) or stay the same (0)
@@ -63,12 +63,12 @@ class PITSchedule:
     def __init__(
         self,
         df: pd.DataFrame,
-        tax_credits: Optional["TaxCreditSchedule"] = None,
+        non_refundable_tax_credits: Optional["NRTCSchedule"] = None,
     ) -> None:
         self._df = df.copy()
         # First year of simulation run
-        self._base_year: int = int(self._df["tax_year"].min())
-        self._tax_credits: Optional["TaxCreditSchedule"] = tax_credits
+        self._start_year: int = int(self._df["year"].min())
+        self._non_refundable_tax_credits: Optional["NRTCSchedule"] = non_refundable_tax_credits
 
     @classmethod
     def from_csv(
@@ -99,72 +99,72 @@ class PITSchedule:
                 f"Found columns: {sorted(df.columns)}"
             )
 
-        geo = jurisdiction.upper()
-        df = df[df["geo"].astype(str).str.upper() == geo].copy()
+        juris = jurisdiction.upper()
+        df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
             raise ValueError(
-                f"CSV {path} does not contain any data for jurisdiction {geo}"
+                f"CSV {path} does not contain any data for jurisdiction {juris}"
             )
 
-        df = df.dropna(subset=["tax_year", "lower", "rate", "index"])
+        df = df.dropna(subset=["year", "lower", "rate", "index"])
 
-        df["tax_year"] = df["tax_year"].astype(int)
+        df["year"] = df["year"].astype(int)
         for col in ("lower", "rate"):
             df[col] = df[col].astype(float)
         df["index"] = df["index"].astype(bool)
 
         return cls(df)
 
-    def load_tax_credits(
+    def load_non_refundable_tax_credits(
         self,
-        credits_path: Optional[Path],
+        nrtc_path: Optional[Path],
         jurisdiction: str,
     ) -> None:
         """If available, add year- and jurisdiction-specific tax credits to ``PITSchedule``."""
 
         # If path does not exist
-        if credits_path is None or not Path(credits_path).exists():
-            logger.debug("No tax credit parameter file supplied (%s)", credits_path)
-            self._tax_credits = None
+        if nrtc_path is None or not Path(nrtc_path).exists():
+            logger.debug("No tax credit parameter file supplied (%s)", nrtc_path)
+            self._non_refundable_tax_credits = None
             return
 
-        credits_path = Path(credits_path)
-        logger.info("Loading tax credit parameter file: %s", credits_path.name)
+        nrtc_path = Path(nrtc_path)
+        logger.info("Loading tax credit parameter file: %s", nrtc_path.name)
         try:
-            self._tax_credits = TaxCreditSchedule.from_csv(
-                credits_path, jurisdiction=jurisdiction
+            self._non_refundable_tax_credits = NRTCSchedule.from_csv(
+                nrtc_path, jurisdiction=jurisdiction
             )
         except ValueError:
             # Tax credit parameter file exists but has no data for this jurisdiction.
             logger.debug(
                 "Tax credit parameter file %s has no data for %s. No tax credits have been applied.",
-                credits_path.name,
+                nrtc_path.name,
                 jurisdiction,
             )
-            self._tax_credits = None
+            self._non_refundable_tax_credits = None
 
     @property
-    def base_year(self) -> int:
+    def start_year(self) -> int:
         """Simulation start year."""
-        return self._base_year
+        return self._start_year
 
     @property
     def available_years(self) -> np.ndarray:
         """Sorted unique years in PIT parameters."""
-        return np.sort(self._df["tax_year"].unique())
+        return np.sort(self._df["year"].unique())
 
     @property
-    def tax_credits(self) -> Optional["TaxCreditSchedule"]:
+    def non_refundable_tax_credits(self) -> Optional["NRTCSchedule"]:
         """
-        Tax credit parameters or ``None`` if not loaded.
+        Non-refundable tax credit parameters or ``None`` if not loaded.
 
-        When there is a ``*_tax_credit*.csv`` file located in the same directory as PIT parameters, tax credit parameters found within that file are passed into the ``TaxCreditSchedule`` class to be used by ``PITSchedule``. If no file is found, no tax credits are added to ``PITSchedule``.
+        When there is a ``*non_refundable_tax_credits*.csv`` file located in the same directory as PIT parameters, tax credit parameters found within that file are passed into the ``NRTCSchedule`` class to be used by ``PITSchedule``. If no file is found, no tax credits are added to ``PITSchedule``.
         """
-        return self._tax_credits
+        return self._non_refundable_tax_credits
 
     def get_brackets(
         self,
-        tax_year: int,
+        year: int,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """        
         Return a tuple containing year-specific PIT parameters (upper and lower income thresholds and corresponding marginal tax rates)
@@ -178,34 +178,30 @@ class PITSchedule:
         Raises:
             ValueError: If user-specified year is out of bounds.
         """
-        years_present = {int(y) for y in self._df["tax_year"].unique()}
+        years_present = {int(y) for y in self._df["year"].unique()}
 
         # Pull PIT parameters if data are available (i.e., if user-specified year within bounds) 
-        if tax_year in years_present:
+        if year in years_present:
             # Filter to this year's rows only; never sort across all years.
-            year_df = self._df[self._df["tax_year"] == tax_year].sort_values("lower")
+            year_df = self._df[self._df["year"] == year].sort_values("lower")
             lowers = year_df["lower"].values.astype(float).copy()
             rates = year_df["rate"].values.astype(float).copy()
-        elif tax_year < self.base_year:
-            raise ValueError(
-                f"tax_year {tax_year} is before base year {self.base_year}"
-            )
         else:
             raise ValueError(
-                f"tax_year {tax_year} is not in the published schedule "
+                f"No PIT data available for year {year} "
                 f"(available years: {sorted(years_present)}). The reader is "
-                f"lookup-only and does not project past the published years; "
-                f"add an explicit row for {tax_year} to the schedule CSV."
+                f"lookup-only and does not project beyond the published years; "
+                f"add an explicit row for {year} to the schedule CSV."
             )
 
         # Array of upper thresholds = lower thresholds (minus lowest lower bound i.e., 0) and np.inf (i.e., upper bound of highest tax bracket)
-        thresholds = np.append(lowers[1:].copy(), np.inf)
+        uppers = np.append(lowers[1:].copy(), np.inf)
 
-        return lowers, thresholds, rates
+        return lowers, uppers, rates
 
-def compute_progressive_tax(
+def compute_personal_income_tax(
     incomes: np.ndarray,
-    thresholds: np.ndarray,
+    uppers: np.ndarray,
     rates: np.ndarray,
 ) -> np.ndarray:
     """
@@ -221,39 +217,32 @@ def compute_progressive_tax(
     Returns:
         array of individual-level income tax payable amounts
     """
-    _validate_brackets(thresholds, rates)
+    # Fail fast on malformed brackets before computing: equal-length arrays,
+    # strictly increasing upper bounds, and rates within [0, 1].
+    _validate_brackets(uppers, rates)
 
     tax = np.zeros_like(incomes, dtype=float)
     lower = 0.0
-    for threshold, rate in zip(thresholds, rates):
-        amount_in_bracket = np.clip(incomes, lower, threshold) - lower
+    for upper, rate in zip(uppers, rates):
+        amount_in_bracket = np.clip(incomes, lower, upper) - lower
         tax += rate * np.maximum(amount_in_bracket, 0.0)
-        lower = threshold
+        lower = upper
     return tax
 
-    def compute_tax(
-        self,
-        incomes: np.ndarray,
-        tax_year: int,
-    ) -> np.ndarray:
-        """Compute personal income tax for a given year (convenience wrapper)."""
-        thresholds, rates, _, _ = self.get_brackets(tax_year)
-        return compute_progressive_tax(incomes, thresholds, rates)
-
-def _validate_brackets(thresholds: np.ndarray, rates: np.ndarray) -> None:
+def _validate_brackets(uppers: np.ndarray, rates: np.ndarray) -> None:
     """
     Ensure that:
     1. Each tax bracket has a corresponding marginal tax rate,
     2. Upper thresholds of tax brackets are strictly increasing, and
     3. Tax rates are in [0.0, 1.0]
     """
-    if len(thresholds) != len(rates):
+    if len(uppers) != len(rates):
         raise ValueError(
-            f"thresholds and rates must have the same length, "
-            f"got {len(thresholds)} and {len(rates)}"
+            f"uppers and rates must have the same length, "
+            f"got {len(uppers)} and {len(rates)}"
         )
-    if len(thresholds) > 1 and not np.all(np.diff(thresholds) > 0):
-        raise ValueError("thresholds must be strictly increasing")
+    if len(uppers) > 1 and not np.all(np.diff(uppers) > 0):
+        raise ValueError("uppers must be strictly increasing")
     if np.any(rates < 0) or np.any(rates > 1):
         raise ValueError("rates must be in [0, 1]")
 

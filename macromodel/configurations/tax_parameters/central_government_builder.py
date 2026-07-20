@@ -37,7 +37,7 @@ from .tax_parameters_reader import apply_tax_parameters
 
 if TYPE_CHECKING:
     from macro_data.readers.taxation import TaxationReader
-    from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import (
+    from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
         TaxCreditComponent,
     )
 
@@ -82,7 +82,7 @@ def _credit_component_to_def(component: TaxCreditComponent) -> Optional[TaxCredi
 def activate_taxation(
     base_config: CentralGovernmentConfiguration,
     taxation_reader: Optional["TaxationReader"],
-    tax_year: int,
+    year: int,
     params_path: str | Path | None = None,
 ) -> CentralGovernmentConfiguration:
     """Layer a government's progressive PIT schedules onto its config, if opted in.
@@ -101,7 +101,7 @@ def activate_taxation(
             preserved when schedules are layered on).
         taxation_reader: The taxation schedules for this government's authority,
             or ``None`` when the country carries no taxation data.
-        tax_year: Tax year for which to compute brackets / credits / dividend rates.
+        year: Tax year for which to compute brackets / credits / dividend rates.
         params_path: Optional override for the scalar YAML file location.
 
     Returns:
@@ -112,7 +112,7 @@ def activate_taxation(
     return build_central_government_configuration(
         taxation_reader,
         jurisdiction=taxation_reader.jurisdiction,
-        tax_year=tax_year,
+        year=year,
         params_path=params_path,
         base_config=base_config,
     )
@@ -121,7 +121,7 @@ def activate_taxation(
 def build_central_government_configuration(
     taxation_reader: "TaxationReader",
     jurisdiction: str,
-    tax_year: int = 2014,
+    year: int = 2014,
     params_path: str | Path | None = None,
     base_config: Optional[CentralGovernmentConfiguration] = None,
 ) -> CentralGovernmentConfiguration:
@@ -139,7 +139,7 @@ def build_central_government_configuration(
             unchanged (flat tax, no progressive PIT).
         jurisdiction: Jurisdiction key for the scalar-block lookup in
             ``tax_parameters.yaml``.
-        tax_year: Tax year for which to compute the (CPI-indexed) brackets and
+        year: Tax year for which to compute the (CPI-indexed) brackets and
             credit amounts, select the dividend rates, and key the scalar lookup.
         params_path: Optional override for the scalar YAML file location.
         base_config: Optional base configuration whose non-tax fields (functions,
@@ -148,7 +148,7 @@ def build_central_government_configuration(
 
     Returns:
         A ``CentralGovernmentConfiguration``: when a reader is supplied, with
-        ``pit_brackets``, ``pit_tax_credits`` and the dividend gross-up / DTC
+        ``pit_brackets``, ``pit_non_refundable_tax_credits`` and the dividend gross-up / DTC
         rates populated from the schedules and the scalar fields overridden from
         the YAML; otherwise the unmodified base (flat) configuration.
     """
@@ -161,17 +161,17 @@ def build_central_government_configuration(
 
     # Brackets, plus the companion credit schedule carried by the reader.
     schedule = taxation_reader.pit_schedule
-    thresholds, rates, _, _ = schedule.get_brackets(tax_year=tax_year)
-    pit_brackets = [(float(t), float(r)) for t, r in zip(thresholds, rates)]
+    _lowers, uppers, rates = schedule.get_brackets(year=year)
+    pit_brackets = [(float(u), float(r)) for u, r in zip(uppers, rates)]
 
     # Map the companion tax credits, skipping the not-yet-expressible ones.
-    pit_tax_credits: Optional[list[TaxCreditDef]] = None
-    if schedule.tax_credits is not None:
-        components = schedule.tax_credits.get_credits(tax_year=tax_year)
+    pit_non_refundable_tax_credits: Optional[list[TaxCreditDef]] = None
+    if schedule.non_refundable_tax_credits is not None:
+        components = schedule.non_refundable_tax_credits.get_credits(year=year)
         mapped = [
             d for d in (_credit_component_to_def(c) for c in components) if d is not None
         ]
-        pit_tax_credits = mapped or None
+        pit_non_refundable_tax_credits = mapped or None
 
     # Dividend gross-up / DTC rates: their presence on the reader is the
     # activation signal; when absent, integration stays off.
@@ -179,7 +179,7 @@ def build_central_government_configuration(
     dividend_schedule_present = taxation_reader.dividend_schedule is not None
     if dividend_schedule_present:
         dividend_rates = taxation_reader.dividend_schedule.get_year_rates(
-            tax_year=tax_year
+            year=year
         )
         eligible = dividend_rates["eligible"]
         non_eligible = dividend_rates["non_eligible"]
@@ -194,12 +194,12 @@ def build_central_government_configuration(
     config = base.model_copy(
         update={
             "pit_brackets": pit_brackets,
-            "pit_tax_credits": pit_tax_credits,
+            "pit_non_refundable_tax_credits": pit_non_refundable_tax_credits,
             **dividend_updates,
         }
     )
     config = apply_tax_parameters(
-        config, jurisdiction=jurisdiction, year=tax_year, path=params_path
+        config, jurisdiction=jurisdiction, year=year, path=params_path
     )
     # Applied after the YAML scalars so schedule presence wins over the YAML
     # switch (which governs only when no schedule is present).

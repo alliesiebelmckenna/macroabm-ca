@@ -20,7 +20,7 @@ from macromodel.country.country import _build_pit_schedule_by_year
 
 # A two-year bracket schedule: 2016 changes the bottom marginal rate (0.0506 →
 # 0.0600), which a CPI inflation of the base year could not express.
-_PIT_HISTORICAL = """tax_year,geo,lower,rate,index
+_PIT_HISTORICAL = """year,jurisdiction,lower,rate,index
 2014,BC,0,0.0506,1
 2014,BC,37606,0.0770,1
 2014,BC,75213,0.1050,0

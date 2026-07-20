@@ -18,8 +18,8 @@ class _StubGovernment:
             self.states["pit_schedule_by_year"] = {2014: object()}
         self.set_for_year_calls = []
 
-    def set_pit_for_year(self, tax_year):
-        self.set_for_year_calls.append(tax_year)
+    def set_pit_for_year(self, year):
+        self.set_for_year_calls.append(year)
 
 
 class _StubCountry:

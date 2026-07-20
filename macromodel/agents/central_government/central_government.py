@@ -33,10 +33,10 @@ from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.configurations import CentralGovernmentConfiguration
 from macromodel.timeseries import TimeSeries
 from macromodel.util.function_mapping import functions_from_model, update_functions
-from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
 
 
-def pit_credit_defs_to_state_dicts(pit_tax_credits) -> list[dict]:
+def pit_credit_defs_to_state_dicts(pit_non_refundable_tax_credits) -> list[dict]:
     """Convert configuration ``TaxCreditDef`` objects to the runtime credit dicts.
 
     Shared by ``from_pickled_agent`` and the per-year schedule table so both
@@ -51,7 +51,7 @@ def pit_credit_defs_to_state_dicts(pit_tax_credits) -> list[dict]:
             "clawback": t.clawback,
             "top": t.top,
         }
-        for t in pit_tax_credits
+        for t in pit_non_refundable_tax_credits
     ]
 
 
@@ -107,20 +107,6 @@ class CentralGovernment(Agent):
         )
         self.functions = functions
 
-        # Snapshot base thresholds for CPI inflation indexing.
-        # When step_pit_brackets() is called mid-simulation, the stored
-        # nominal values are compound-inflated and written back to states.
-        if "pit_thresholds" in states:
-            self.pit_base_thresholds = states["pit_thresholds"].copy()
-        else:
-            self.pit_base_thresholds = None
-
-        # Snapshot base taxable-income deduction for CPI inflation indexing.
-        self.pit_base_deductions: Optional[float] = states.get("pit_taxable_income_deductions")
-
-        # Snapshot base tax credits (list of dicts) for CPI indexing.
-        self.pit_base_tax_credits: Optional[list[dict]] = states.get("pit_tax_credits")
-
     @classmethod
     def from_pickled_agent(
         cls,
@@ -172,13 +158,13 @@ class CentralGovernment(Agent):
         # Progressive PIT schedule; absent pit_brackets means flat Income Tax.
         if configuration.pit_brackets is not None:
             brackets = np.array(configuration.pit_brackets, dtype=float)
-            states["pit_thresholds"] = brackets[:, 0]
+            states["pit_uppers"] = brackets[:, 0]
             states["pit_rates"] = brackets[:, 1]
             if configuration.pit_taxable_income_deductions is not None:
                 states["pit_taxable_income_deductions"] = configuration.pit_taxable_income_deductions
-            if configuration.pit_tax_credits is not None:
-                states["pit_tax_credits"] = pit_credit_defs_to_state_dicts(
-                    configuration.pit_tax_credits
+            if configuration.pit_non_refundable_tax_credits is not None:
+                states["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
+                    configuration.pit_non_refundable_tax_credits
                 )
 
         states["couple_rental_income_split"] = configuration.couple_rental_income_split
@@ -394,15 +380,14 @@ class CentralGovernment(Agent):
         # Taxes on exports
         self.ts.taxes_exports.append([self.states["Export Tax"] * current_total_exports])
 
-        # Total wages of employed individuals (after Employee SI deduction —
-        # this is the standard taxable base for personal income tax)
+        # Total wages of employed individuals
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
         # Personal income tax: progressive when a schedule is configured, else flat.
-        pit_thresholds = self.states.get("pit_thresholds")
+        pit_uppers = self.states.get("pit_uppers")
         pit_rates = self.states.get("pit_rates")
 
-        if pit_thresholds is not None and pit_rates is not None:
+        if pit_uppers is not None and pit_rates is not None:
             # Assemble any pool not supplied by the processing phase; each is
             # built independently so taxable income alone still applies credits.
             if taxable_income_per_ind is None or credit_base_per_ind is None:
@@ -421,7 +406,7 @@ class CentralGovernment(Agent):
                     taxable_income_per_ind = build_taxable_income_pool(ctx)
                 if credit_base_per_ind is None:
                     credit_base_per_ind = build_credit_base_pool(
-                        self.states.get("pit_tax_credits"),
+                        self.states.get("pit_non_refundable_tax_credits"),
                         taxable_income_per_ind,
                         ctx,
                     )
@@ -475,7 +460,7 @@ class CentralGovernment(Agent):
         Returns:
             float: Total personal income tax revenue.
         """
-        pit_thresholds = self.states["pit_thresholds"]
+        pit_uppers = self.states["pit_uppers"]
         pit_rates = self.states["pit_rates"]
 
         # Deductions reduce the base before the brackets.
@@ -484,8 +469,8 @@ class CentralGovernment(Agent):
         if deductions is not None and deductions > 0:
             base_for_brackets = np.maximum(0.0, taxable_income_per_ind - deductions)
 
-        pit_per_individual = compute_progressive_tax(
-            base_for_brackets, pit_thresholds, pit_rates
+        pit_per_individual = compute_personal_income_tax(
+            base_for_brackets, pit_uppers, pit_rates
         )
 
         # Non-refundable credits, floored at zero (excess is lost, not refunded).
@@ -523,8 +508,8 @@ class CentralGovernment(Agent):
             + self.ts.current("taxes_exports")[0]
         )
 
-    def set_pit_for_year(self, tax_year: int) -> None:
-        """Swap in the PIT schedule for *tax_year* from ``states["pit_schedule_by_year"]``.
+    def set_pit_for_year(self, year: int) -> None:
+        """Swap in the PIT schedule for *year* from ``states["pit_schedule_by_year"]``.
 
         A statutory lookup with no forward projection: a year before the first
         uses the first year's schedule, a gap year holds at the most recent prior
@@ -532,34 +517,34 @@ class CentralGovernment(Agent):
         present (flat and single-year governments stay frozen at construction).
 
         Args:
-            tax_year: The simulation's current calendar year.
+            year: The simulation's current calendar year.
 
         Raises:
-            ValueError: If ``tax_year`` exceeds the last published year.
+            ValueError: If ``year`` exceeds the last published year.
         """
         table = self.states.get("pit_schedule_by_year")
         if not table:
             return
 
         years = sorted(table)
-        if tax_year in table:
-            selected = tax_year
-        elif tax_year < years[0]:
+        if year in table:
+            selected = year
+        elif year < years[0]:
             selected = years[0]
-        elif tax_year > years[-1]:
+        elif year > years[-1]:
             raise ValueError(
-                f"Simulation year {tax_year} exceeds the last available PIT "
+                f"Simulation year {year} exceeds the last available PIT "
                 f"schedule year {years[-1]}. The schedule is a statutory "
                 f"lookup with no forward projection; extend the taxation "
-                f"schedule CSVs to cover {tax_year} before running a "
+                f"schedule CSVs to cover {year} before running a "
                 f"simulation this far."
             )
         else:
             # Gap year: hold at the most recent published year at or before it.
-            selected = max(y for y in years if y <= tax_year)
+            selected = max(y for y in years if y <= year)
 
         fragment = table[selected]
-        self.states["pit_thresholds"] = fragment["pit_thresholds"]
+        self.states["pit_uppers"] = fragment["pit_uppers"]
         self.states["pit_rates"] = fragment["pit_rates"]
         # Clear on absence so a field omitted this year drops any stale value.
         if "pit_taxable_income_deductions" in fragment:
@@ -568,10 +553,10 @@ class CentralGovernment(Agent):
             ]
         else:
             self.states.pop("pit_taxable_income_deductions", None)
-        if "pit_tax_credits" in fragment:
-            self.states["pit_tax_credits"] = fragment["pit_tax_credits"]
+        if "pit_non_refundable_tax_credits" in fragment:
+            self.states["pit_non_refundable_tax_credits"] = fragment["pit_non_refundable_tax_credits"]
         else:
-            self.states.pop("pit_tax_credits", None)
+            self.states.pop("pit_non_refundable_tax_credits", None)
 
     def compute_revenue(
         self,

@@ -820,7 +820,7 @@ def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
     from macromodel.configurations import CentralGovernmentConfiguration
 
     (tmp_path / "rates_thresholds.csv").write_text(
-        "tax_year,geo,lower,rate,index\n"
+        "year,jurisdiction,lower,rate,index\n"
         "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
         "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
     )
@@ -859,13 +859,13 @@ def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
     assert len(simulation.prehooks) == 1
     cg = simulation.countries["FRA"].central_government
     assert "pit_schedule_by_year" in cg.states
-    assert cg.states["pit_thresholds"][0] == pytest.approx(37606.0 * scale)
+    assert cg.states["pit_uppers"][0] == pytest.approx(37606.0 * scale)
     assert cg.states["pit_rates"][0] == pytest.approx(0.0506)
 
     # The real run_prehooks loop advances the schedule to the published 2016
     # values, including the bottom-rate change (5.06% -> 6.00%).
     simulation.run_prehooks(2016, 1)
-    assert cg.states["pit_thresholds"][0] == pytest.approx(40000.0 * scale)
+    assert cg.states["pit_uppers"][0] == pytest.approx(40000.0 * scale)
     assert cg.states["pit_rates"][0] == pytest.approx(0.0600)
 
 

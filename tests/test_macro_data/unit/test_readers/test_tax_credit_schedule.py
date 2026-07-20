@@ -1,4 +1,4 @@
-"""Unit tests for TaxCreditSchedule statutory lookup over a multi-year file.
+"""Unit tests for NRTCSchedule statutory lookup over a multi-year file.
 
 A multi-year credit schedule must return ONLY the requested year's actual
 components (statutory lookup), not a mix of every year's rows compounded from
@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from macro_data.readers.taxation.personal_income_tax.tax_credit_schedule import (
-    TaxCreditSchedule,
+from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
+    NRTCSchedule,
 )
 
 
@@ -19,7 +19,7 @@ def _multiyear_csv(tmp_path) -> Path:
     # compounded/mixed result. 2016 also carries a different valuation `rate`.
     p = tmp_path / "credits_multi.csv"
     p.write_text(
-        "tax_year,geo,credit,amount,top,rate,clawback,clawback_rate,index\n"
+        "year,jurisdiction,credit,amount,top,rate,clawback,clawback_rate,index\n"
         "2014,BC,Personal Amount,9000,,0.0506,,,1\n"
         "2015,BC,Personal Amount,9500,,0.0506,,,1\n"
         "2016,BC,Personal Amount,12000,,0.0560,,,1\n"
@@ -31,11 +31,11 @@ class TestCreditStatutoryLookup:
     @staticmethod
     def _personal(sched, year):
         return [
-            c for c in sched.get_credits(tax_year=year) if c.credit == "Personal Amount"
+            c for c in sched.get_credits(year=year) if c.credit == "Personal Amount"
         ]
 
     def test_lookup_2015(self, tmp_path):
-        sched = TaxCreditSchedule.from_csv(_multiyear_csv(tmp_path), jurisdiction="bc")
+        sched = NRTCSchedule.from_csv(_multiyear_csv(tmp_path), jurisdiction="bc")
         comps = self._personal(sched, 2015)
         assert len(comps) == 1  # only 2015's row, not all three years
         assert comps[0].amount == pytest.approx(9500)
@@ -43,9 +43,9 @@ class TestCreditStatutoryLookup:
 
 
 
-    def test_consolidated_geo_format_loads_bc_rows(self):
+    def test_consolidated_jurisdiction_format_loads_bc_rows(self):
         """The contributor's consolidated credit file loads BC rows cleanly."""
-        sched = TaxCreditSchedule.from_name(
+        sched = NRTCSchedule.from_name(
             "non_refundable_tax_credits.csv",
             schedule_dir=Path(__file__).resolve().parents[4]
             / "spoof_data"

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 
 
@@ -44,9 +44,10 @@ class TestCentralGovernmentPIT:
 
 
     def test_flat_config_has_no_pit_states(self, test_central_government):
-        """Without pit_brackets, pit_thresholds/rates are absent."""
-        assert "pit_thresholds" not in test_central_government.states
+        """Without pit_brackets, pit_uppers/rates are absent."""
+        assert "pit_uppers" not in test_central_government.states
         assert "pit_rates" not in test_central_government.states
+
 
 
     def test_compute_taxes_effective_rate_update(self, test_central_government_pit):
@@ -75,9 +76,9 @@ class TestCentralGovernmentPIT:
 
         # Recompute the expected effective rate from the tax paid
         taxable = emp_income * (1 - cg.states["Employee Social Insurance Tax"])
-        pit = compute_progressive_tax(
+        pit = compute_personal_income_tax(
             taxable,
-            cg.states["pit_thresholds"],
+            cg.states["pit_uppers"],
             cg.states["pit_rates"],
         )
         expected_rate = float(pit.sum() / taxable.sum())
@@ -87,7 +88,7 @@ class TestCentralGovernmentPIT:
         )
 
 
-    # pit_tax_credits (multi-component)
+    # pit_non_refundable_tax_credits (multi-component)
 
 
 
@@ -123,8 +124,8 @@ class TestCentralGovernmentPIT:
         )
 
         tax = cg.ts.get_aggregate("taxes_income")[-1]
-        pit_raw = compute_progressive_tax(
-            taxable, cg.states["pit_thresholds"], cg.states["pit_rates"],
+        pit_raw = compute_personal_income_tax(
+            taxable, cg.states["pit_uppers"], cg.states["pit_rates"],
         ).sum()
         # Credits must have been applied → net tax strictly below gross PIT.
         assert tax < pit_raw
@@ -171,9 +172,9 @@ class TestCentralGovernmentPIT:
         pit_with_deduction = cg.compute_pit(taxable.copy())
 
         assert pit_with_deduction < pit_no_deduction
-        expected = compute_progressive_tax(
+        expected = compute_personal_income_tax(
             np.array([35000.0]),
-            cg.states["pit_thresholds"],
+            cg.states["pit_uppers"],
             cg.states["pit_rates"],
         ).sum()
         assert pit_with_deduction == pytest.approx(expected)

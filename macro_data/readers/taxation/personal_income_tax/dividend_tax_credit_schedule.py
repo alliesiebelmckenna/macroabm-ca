@@ -5,7 +5,7 @@ rates from a consolidated ``dividend_tax_credit_schedule.csv`` keyed by tax year
 jurisdiction, and dividend type (``eligible`` / ``non_eligible``), and supplies
 the rates that apply in a requested year. The gross-up is federally set and
 currently uniform across jurisdictions, while the DTC rate is
-jurisdiction-specific; both are carried per row under the ``geo`` column, so a
+jurisdiction-specific; both are carried per row under the ``jurisdiction`` column, so a
 jurisdiction that diverges (e.g. Quebec) can hold its own gross-up without any
 schema change. Lookups are statutory only: a requested year must be published
 in the CSV, since the schedule is never projected past the years it records.
@@ -21,8 +21,8 @@ import pandas as pd
 
 # Required CSV columns in the consolidated dividend_tax_credit_schedule.csv.
 _DTC_REQUIRED_COLS = {
-    "tax_year",              # taxation year the row applies to
-    "geo",                   # jurisdiction key (e.g. "BC", "CA")
+    "year",              # taxation year the row applies to
+    "jurisdiction",          # jurisdiction key (e.g. "BC", "CA")
     "dividend_type",         # "eligible" / "non_eligible"
     "gross_up_rate",         # taxable = (1 + rate) x cash (federal, uniform)
     "dtc_pct_of_grossed_up", # DTC as a fraction of grossed-up
@@ -66,7 +66,7 @@ class DividendTaxCreditSchedule:
 
         Args:
             path: Path to the CSV (``dividend_tax_credit_schedule.csv``).
-            jurisdiction: Jurisdiction key used to filter the geo rows.
+            jurisdiction: Jurisdiction key used to filter the jurisdiction rows.
 
         Returns:
             A configured ``DividendTaxCreditSchedule``.
@@ -87,15 +87,15 @@ class DividendTaxCreditSchedule:
                 f"Found: {sorted(df.columns)}"
             )
 
-        geo = jurisdiction.upper()
-        df = df[df["geo"].astype(str).str.upper() == geo].copy()
+        juris = jurisdiction.upper()
+        df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
             raise ValueError(
-                f"Dividend-rate CSV {path} does not contain any rows for geo {geo}"
+                f"Dividend-rate CSV {path} does not contain any rows for jurisdiction {juris}"
             )
 
         df["dividend_type"] = df["dividend_type"].astype(str).str.strip().str.lower()
-        df["tax_year"] = df["tax_year"].astype(int)
+        df["year"] = df["year"].astype(int)
         for col in ("gross_up_rate", "dtc_pct_of_grossed_up"):
             df[col] = df[col].astype(float)
         if "dtc_pct_of_actual" in df.columns:
@@ -118,7 +118,7 @@ class DividendTaxCreditSchedule:
             filename: CSV filename (``"dividend_tax_credit_schedule.csv"``).
             schedule_dir: Directory holding the schedule CSVs — typically
                 ``raw_data_path / "taxation" / "personal_income_tax"``.
-            jurisdiction: Jurisdiction key used to filter the geo rows.
+            jurisdiction: Jurisdiction key used to filter the jurisdiction rows.
 
         Returns:
             A configured ``DividendTaxCreditSchedule``.
@@ -135,15 +135,15 @@ class DividendTaxCreditSchedule:
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 
-    def get_rates(self, tax_year: int, dividend_type: str) -> DividendRates:
-        """Return the published rates for *dividend_type* in *tax_year* (statutory lookup).
+    def get_rates(self, year: int, dividend_type: str) -> DividendRates:
+        """Return the published rates for *dividend_type* in *year* (statutory lookup).
 
         A year present in the schedule returns its own published row. A year not
         in the schedule raises, since the reader does not project past published
         years.
 
         Args:
-            tax_year: The tax year to look up.
+            year: The tax year to look up.
             dividend_type: ``"eligible"`` or ``"non_eligible"``.
 
         Returns:
@@ -160,17 +160,17 @@ class DividendTaxCreditSchedule:
                 f"Available: {sorted(self._df['dividend_type'].unique())}"
             )
 
-        matches = sub[sub["tax_year"] == tax_year]
+        matches = sub[sub["year"] == year]
         if matches.empty:
             raise ValueError(
-                f"No '{dtype}' dividend rate row for tax year {tax_year} "
-                f"(available years: {sorted(int(y) for y in sub['tax_year'].unique())}). "
+                f"No '{dtype}' dividend rate row for tax year {year} "
+                f"(available years: {sorted(int(y) for y in sub['year'].unique())}). "
                 f"The reader is lookup-only and does not project past the published "
-                f"years; add an explicit row for {tax_year} to the schedule CSV."
+                f"years; add an explicit row for {year} to the schedule CSV."
             )
         if len(matches) > 1:
             raise ValueError(
-                f"Duplicate '{dtype}' dividend rate rows for tax year {tax_year}: "
+                f"Duplicate '{dtype}' dividend rate rows for tax year {year}: "
                 f"{len(matches)} rows match (each year must have one row per type)."
             )
 
@@ -185,11 +185,11 @@ class DividendTaxCreditSchedule:
             ),
         )
 
-    def get_year_rates(self, tax_year: int) -> dict[str, DividendRates]:
-        """Return the rates for every dividend type in *tax_year*.
+    def get_year_rates(self, year: int) -> dict[str, DividendRates]:
+        """Return the rates for every dividend type in *year*.
 
         Args:
-            tax_year: The tax year to look up.
+            year: The tax year to look up.
 
         Returns:
             Dict mapping each dividend type (``"eligible"`` /
@@ -199,5 +199,5 @@ class DividendTaxCreditSchedule:
             ValueError: If any dividend type has no applicable row.
         """
         return {
-            dtype: self.get_rates(tax_year, dtype) for dtype in _DIVIDEND_TYPES
+            dtype: self.get_rates(year, dtype) for dtype in _DIVIDEND_TYPES
         }

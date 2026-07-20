@@ -98,11 +98,11 @@ def _scale_pit_policy(
     updates: dict = {}
     if config.pit_brackets is not None:
         updates["pit_brackets"] = [
-            (threshold * scale, rate) for threshold, rate in config.pit_brackets
+            (upper * scale, rate) for upper, rate in config.pit_brackets
         ]
-    if config.pit_tax_credits is not None:
-        updates["pit_tax_credits"] = [
-            _scaled_tax_credit(credit, scale) for credit in config.pit_tax_credits
+    if config.pit_non_refundable_tax_credits is not None:
+        updates["pit_non_refundable_tax_credits"] = [
+            _scaled_tax_credit(credit, scale) for credit in config.pit_non_refundable_tax_credits
         ]
     for name in monetary_field_names(type(config)):
         value = getattr(config, name)
@@ -119,9 +119,9 @@ def _build_pit_schedule_by_year(
     taxation_reader,
     scale: int,
 ) -> Optional[dict[int, dict]]:
-    """Build the ``{tax_year: state_fragment}`` PIT schedule table for every published year.
+    """Build the ``{year: state_fragment}`` PIT schedule table for every published year.
 
-    Each fragment holds that year's agent-scaled thresholds, rates, credits, and
+    Each fragment holds that year's agent-scaled uppers, rates, credits, and
     deduction, which ``CentralGovernment.set_pit_for_year`` swaps into the agent
     states as the calendar year advances. Returns ``None`` when progressive PIT
     is not opted in or no taxation data is present.
@@ -138,7 +138,7 @@ def _build_pit_schedule_by_year(
         config_year = activate_taxation(
             base_config=base_config,
             taxation_reader=taxation_reader,
-            tax_year=year,
+            year=year,
         )
         if config_year.pit_brackets is None:
             continue
@@ -147,16 +147,16 @@ def _build_pit_schedule_by_year(
         brackets_array = np.array(config_year.pit_brackets, dtype=float)
 
         fragment: dict = {
-            "pit_thresholds": brackets_array[:, 0],
+            "pit_uppers": brackets_array[:, 0],
             "pit_rates": brackets_array[:, 1],
         }
         if config_year.pit_taxable_income_deductions is not None:
             fragment["pit_taxable_income_deductions"] = (
                 config_year.pit_taxable_income_deductions
             )
-        if config_year.pit_tax_credits is not None:
-            fragment["pit_tax_credits"] = pit_credit_defs_to_state_dicts(
-                config_year.pit_tax_credits
+        if config_year.pit_non_refundable_tax_credits is not None:
+            fragment["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
+                config_year.pit_non_refundable_tax_credits
             )
         table[year] = fragment
 
@@ -431,7 +431,7 @@ class Country:
         central_government_config = activate_taxation(
             base_config=country_configuration.central_government,
             taxation_reader=synthetic_country.taxation,
-            tax_year=initial_year,
+            year=initial_year,
         )
         central_government_config = _scale_pit_policy(central_government_config, scale)
 
@@ -457,11 +457,12 @@ class Country:
 
         # Pre-calibrate states["Income Tax"] to the schedule-implied effective
         # rate so the first period carries no t=0 calibration shock.
-        pit_thresholds = central_government.states.get("pit_thresholds")
+        pit_uppers = central_government.states.get("pit_uppers")
         pit_rates = central_government.states.get("pit_rates")
-        if pit_thresholds is not None and pit_rates is not None:
+        if pit_uppers is not None and pit_rates is not None:
             ind_ages = individuals.states.get("Age")
             ind_corr_hh = individuals.states.get("Corresponding Household ID")
+
             pit_ctx = PitContext(
                 employee_income=individuals.states["Employee Income"],
                 employee_si_rate=float(
@@ -474,7 +475,7 @@ class Country:
             )
             taxable_pool = build_taxable_income_pool(pit_ctx)
             credit_pool = build_credit_base_pool(
-                central_government.states.get("pit_tax_credits"),
+                central_government.states.get("pit_non_refundable_tax_credits"),
                 taxable_pool,
                 pit_ctx,
             )
@@ -1578,7 +1579,7 @@ class Country:
         )
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
         credit_base_per_ind = build_credit_base_pool(
-            self.central_government.states.get("pit_tax_credits"),
+            self.central_government.states.get("pit_non_refundable_tax_credits"),
             taxable_income_per_ind,
             pit_ctx,
         )
