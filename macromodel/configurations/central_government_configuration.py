@@ -69,7 +69,6 @@ class TaxCreditDef(BaseModel):
         default=0.0, ge=0.0, json_schema_extra=CURRENCY,
         description="Base dollar amount.",
     )
-    index: bool = Field(default=True, description="Whether statutorily indexed.")
     eligibility_age_min: Optional[int] = Field(
         default=None, json_schema_extra=YEARS,
         description="Minimum age (e.g. 65 for Age Amount).",
@@ -125,13 +124,6 @@ class CentralGovernmentConfiguration(BaseModel):
         default=None,
         description="List of non-refundable tax credits with eligibility rules. "
         "None means no credits applied.",
-    )
-
-    pit_taxable_income_deductions: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        json_schema_extra=CURRENCY,
-        description="Flat per-individual deduction from taxable income before brackets.",
     )
 
     couple_rental_income_split: float = Field(

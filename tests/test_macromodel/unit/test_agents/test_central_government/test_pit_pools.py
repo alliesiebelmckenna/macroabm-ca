@@ -90,7 +90,6 @@ class TestCreditBasePool:
                 ],
                 dtype=object,
             ),
-            households_n_adults=np.array([1, 1]),
         )
         credit_defs = [{"credit": "Equivalent To Spouse Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
@@ -138,7 +137,6 @@ class TestSpousalAmountGrouping:
                 ],
                 dtype=object,
             ),
-            households_n_adults=np.array([2, 1]),
         )
 
 
@@ -157,7 +155,6 @@ class TestSpousalAmountGrouping:
             households_type=np.array(
                 [HouseholdType.TWO_ADULTS_WITH_TWO_CHILDREN], dtype=object
             ),
-            households_n_adults=np.array([2]),
         )
         taxable = build_taxable_income_pool(ctx)  # [50000, 5000, 0, 0]
 

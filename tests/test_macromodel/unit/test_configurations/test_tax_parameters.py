@@ -101,20 +101,12 @@ class TestBuildCentralGovernmentConfiguration:
             if c.credit == "Equivalent To Spouse Amount"
         )
 
-        # Convert the built credits into the runtime states-dict form (mirrors
-        # CentralGovernment.from_synthetic).
-        def to_defs(credits):
-            return [
-                {
-                    "credit": t.credit,
-                    "amount": t.amount,
-                    "index": t.index,
-                    "age_min": t.eligibility_age_min,
-                    "clawback": t.clawback,
-                    "top": t.top,
-                }
-                for t in credits
-            ]
+        # Convert the built credits into the runtime states-dict form using the
+        # production helper itself, so this test cannot drift from the shape the
+        # agent actually builds.
+        from macromodel.agents.central_government.central_government import (
+            pit_credit_defs_to_state_dicts as to_defs,
+        )
 
         # Individuals 0,1 are a couple (household 0); individual 2 is a single
         # parent (household 1).  Individual 1 has zero income, so individual 0
@@ -131,7 +123,6 @@ class TestBuildCentralGovernmentConfiguration:
                     HouseholdType.SINGLE_PARENT_WITH_CHILDREN,
                 ]
             ),
-            households_n_adults=np.array([2, 1]),
         )
 
         all_defs = to_defs(config.pit_non_refundable_tax_credits)
@@ -170,11 +161,14 @@ class TestBuildCentralGovernmentConfiguration:
 
 
 class TestDeferredCreditSafety:
-    """Credits the runtime cannot yet express must be DEFERRED — skipped by the
-    builder — never applied universally.  Covers both explicitly-registered
-    deferred kinds and unknown kinds (the unmapped fallback).  Without this, the
-    expanded historical CSV would grant e.g. the Disability Amount to every
-    individual at full value."""
+    """Credits the runtime cannot express must be skipped by the builder, never
+    applied universally.  Since the dormant kinds were unregistered from
+    ``_ELIGIBILITY_RULES``, every one of them reaches the builder as an *unmapped*
+    credit, so that single fallback is now the only thing standing between the
+    published schedule and a universal grant.  The parametrised case below pins
+    it against the real credit names the CSV still publishes — without it, the
+    historical CSV would grant e.g. the Disability Amount to every individual at
+    full value."""
 
     @staticmethod
     def _load_one(kind: str, tmp_path: Path, amount: str = "1000"):
@@ -208,10 +202,12 @@ class TestDeferredCreditSafety:
             "BC Tax Reduction Credit",
         ],
     )
-    def test_registered_deferred_credit_dropped_by_builder(self, kind, tmp_path):
-        """Every currently-live credit the model cannot yet compute is registered
-        deferred and skipped by the builder, so loading the full historical CSV
-        never grants them universally."""
+    def test_published_dormant_credit_dropped_by_builder(self, kind, tmp_path):
+        """Each credit the CSV still publishes but the runtime cannot compute is
+        dropped by the builder, so loading the full historical CSV never grants
+        them universally.  These names are read from the published schedule, not
+        invented, so the case fails if one is ever re-registered without a
+        matching runtime branch."""
         from macromodel.configurations.tax_parameters.central_government_builder import (
             _credit_component_to_def,
         )

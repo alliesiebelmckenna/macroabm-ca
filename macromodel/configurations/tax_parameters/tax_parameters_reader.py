@@ -42,7 +42,6 @@ _ALLOWED_FIELDS = frozenset(
         "dividend_small_business_share",
         "bank_dividend_small_business_share",
         "couple_rental_income_split",
-        "pit_taxable_income_deductions",
     }
 )
 
@@ -179,8 +178,8 @@ def read_tax_parameters(
         raise ValueError(
             f"Schedule field(s) {sorted(schedule_keys)} found in {yaml_path.name}. "
             "Bracket, credit, and dividend-rate schedules belong in their CSV "
-            "files in the taxation directory (raw_data_path/'taxation', "
-            "spoof_data/freda fallback), not in the scalar parameter file."
+            "files in the taxation directory under the configured data root, "
+            "not in the scalar parameter file."
         )
 
     unknown_keys = set(overrides) - _ALLOWED_FIELDS

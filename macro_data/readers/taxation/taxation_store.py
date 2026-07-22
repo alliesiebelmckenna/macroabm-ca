@@ -87,10 +87,6 @@ class TaxationStore:
         """
         return cls.from_paths(SchedulePaths.in_dir(Path(schedule_dir), **filenames))
 
-    def covers(self, country: "Country | Region | str") -> bool:
-        """Whether the data carries a bracket schedule for *country*'s authority."""
-        return jurisdiction_of(country) in self.jurisdictions
-
     def for_country(self, country: "Country | Region | str") -> Optional[TaxationReader]:
         """This country's own schedules, or ``None`` when the data does not cover it.
 

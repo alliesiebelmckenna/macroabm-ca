@@ -14,7 +14,7 @@ switched on automatically when a dividend schedule is present, overriding the
 ``pit_dividend_integration`` switch in the YAML (which governs only when no
 schedule is found).
 
-Monetary fields (brackets, credit amounts and clawback bounds, deductions) are
+Monetary fields (brackets, credit amounts and clawback bounds) are
 returned in per-individual dollars; conversion to agent units happens later in
 ``country._scale_pit_policy``, so the builder must not pre-scale. Credits whose
 eligibility the runtime credit pool cannot yet evaluate are skipped and logged
@@ -72,7 +72,6 @@ def _credit_component_to_def(component: TaxCreditComponent) -> Optional[TaxCredi
     return TaxCreditDef(
         credit=component.credit,
         amount=component.amount,
-        index=component.index,
         eligibility_age_min=component.eligibility.get("age_min"),
         clawback=component.clawback,
         top=component.top,

@@ -2,7 +2,29 @@ import numpy as np
 import pytest
 
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
+from macromodel.agents.central_government.pit_pools import (
+    PitContext,
+    build_credit_base_pool,
+    build_taxable_income_pool,
+)
 from macromodel.agents.individuals.individual_properties import ActivityStatus
+
+
+def _pools_for(cg, employee_income):
+    """Assemble the two PIT pools the way the country step does.
+
+    ``compute_taxes`` requires both; only the processing phase holds the
+    household context they depend on.
+    """
+    ctx = PitContext(
+        employee_income=employee_income,
+        employee_si_rate=float(cg.states["Employee Social Insurance Tax"]),
+    )
+    taxable = build_taxable_income_pool(ctx)
+    credits = build_credit_base_pool(
+        cg.states.get("pit_non_refundable_tax_credits"), taxable, ctx
+    )
+    return taxable, credits
 
 
 class TestCentralGovernment:
@@ -57,6 +79,7 @@ class TestCentralGovernmentPIT:
 
         emp_income = np.array([50000.0, 50000.0])
         activity = np.array([ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED])
+        taxable, credits = _pools_for(cg, emp_income)
 
         cg.compute_taxes(
             current_ind_employee_income=emp_income,
@@ -72,6 +95,8 @@ class TestCentralGovernmentPIT:
             current_household_new_real_wealth=np.zeros(1),
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
+            taxable_income_per_ind=taxable,
+            credit_base_per_ind=credits,
         )
 
         # Recompute the expected effective rate from the tax paid
@@ -93,44 +118,38 @@ class TestCentralGovernmentPIT:
 
 
 
-    def test_credits_applied_when_only_taxable_pool_supplied(
+    def test_missing_pool_raises_rather_than_assembling_one(
         self, test_central_government_pit_full,
     ):
-        """Supplying taxable_income_per_ind but omitting credit_base_per_ind
-        must still apply configured credits (the missing pool is built),
-        not leak gross PIT through."""
+        """A pool the caller failed to supply is an error, not something to
+        assemble here: only the processing phase holds the household context
+        and the dividend items, so a silently self-built pool could omit a
+        dividend's credit while taxing its grossed-up amount."""
         cg = test_central_government_pit_full
 
         emp_income = np.array([50000.0, 50000.0])
-        activity = np.array([ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED])
-        taxable = emp_income * (1 - cg.states["Employee Social Insurance Tax"])
+        taxable, _ = _pools_for(cg, emp_income)
 
-        cg.compute_taxes(
-            current_ind_employee_income=emp_income,
-            current_total_rent_paid=0.0,
-            current_income_financial_assets=np.zeros(2),
-            current_ind_activity=activity,
-            current_ind_realised_cons=np.zeros(2),
-            current_bank_profits=np.zeros(1),
-            current_firm_production=np.zeros(1),
-            current_firm_price=np.ones(1),
-            current_firm_profits=np.zeros(1),
-            current_firm_industries=np.zeros(1, dtype=int),
-            current_household_new_real_wealth=np.zeros(1),
-            taxes_less_subsidies_rates=np.zeros(1),
-            current_total_exports=0.0,
-            # Pool A provided, Pool B intentionally omitted.
-            taxable_income_per_ind=taxable,
-        )
-
-        tax = cg.ts.get_aggregate("taxes_income")[-1]
-        pit_raw = compute_personal_income_tax(
-            taxable, cg.states["pit_uppers"], cg.states["pit_rates"],
-        ).sum()
-        # Credits must have been applied → net tax strictly below gross PIT.
-        assert tax < pit_raw
-        expected_reduction = 9869.0 * float(cg.states["pit_rates"][0]) * 2
-        assert pit_raw - tax == pytest.approx(expected_reduction, rel=1e-10)
+        with pytest.raises(ValueError, match="requires both pools"):
+            cg.compute_taxes(
+                current_ind_employee_income=emp_income,
+                current_total_rent_paid=0.0,
+                current_income_financial_assets=np.zeros(2),
+                current_ind_activity=np.array(
+                    [ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED]
+                ),
+                current_ind_realised_cons=np.zeros(2),
+                current_bank_profits=np.zeros(1),
+                current_firm_production=np.zeros(1),
+                current_firm_price=np.ones(1),
+                current_firm_profits=np.zeros(1),
+                current_firm_industries=np.zeros(1, dtype=int),
+                current_household_new_real_wealth=np.zeros(1),
+                taxes_less_subsidies_rates=np.zeros(1),
+                current_total_exports=0.0,
+                # Pool A supplied, Pool B omitted.
+                taxable_income_per_ind=taxable,
+            )
 
     def test_tax_credits_floor_at_zero(
         self, test_central_government_pit_full,
@@ -140,6 +159,7 @@ class TestCentralGovernmentPIT:
 
         emp_income = np.array([5000.0])
         activity = np.array([ActivityStatus.EMPLOYED])
+        taxable, credits = _pools_for(cg, emp_income)
 
         cg.compute_taxes(
             current_ind_employee_income=emp_income,
@@ -155,29 +175,13 @@ class TestCentralGovernmentPIT:
             current_household_new_real_wealth=np.zeros(1),
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
+            taxable_income_per_ind=taxable,
+            credit_base_per_ind=credits,
         )
 
         last_tax = cg.ts.get_aggregate("taxes_income")[-1]
         assert last_tax == pytest.approx(0.0, abs=1e-6)
 
-    def test_compute_pit_deductions_lower_bracket_base(self, test_central_government_pit):
-        """Taxable-income deductions reduce the base *before* the brackets,
-        so compute_pit taxes (income - deduction)."""
-        cg = test_central_government_pit
-        taxable = np.array([40000.0])
-
-        pit_no_deduction = cg.compute_pit(taxable.copy())
-
-        cg.states["pit_taxable_income_deductions"] = 5000.0
-        pit_with_deduction = cg.compute_pit(taxable.copy())
-
-        assert pit_with_deduction < pit_no_deduction
-        expected = compute_personal_income_tax(
-            np.array([35000.0]),
-            cg.states["pit_uppers"],
-            cg.states["pit_rates"],
-        ).sum()
-        assert pit_with_deduction == pytest.approx(expected)
 
 
 

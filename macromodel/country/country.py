@@ -87,8 +87,8 @@ def _scale_pit_policy(
 ) -> CentralGovernmentConfiguration:
     """Return a copy of *config* with every PIT policy dollar scaled to agent units.
 
-    The single seam converting per-person statutory dollars (brackets, credit
-    currency fields, deductions) to agent-level units, so the construction-year
+    The single seam converting per-person statutory dollars (brackets and credit
+    currency fields) to agent-level units, so the construction-year
     config and the per-year schedule cannot diverge. ``scale <= 1`` is an
     identity; the caller-owned *config* is not mutated.
     """
@@ -150,10 +150,6 @@ def _build_pit_schedule_by_year(
             "pit_uppers": brackets_array[:, 0],
             "pit_rates": brackets_array[:, 1],
         }
-        if config_year.pit_taxable_income_deductions is not None:
-            fragment["pit_taxable_income_deductions"] = (
-                config_year.pit_taxable_income_deductions
-            )
         if config_year.pit_non_refundable_tax_credits is not None:
             fragment["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                 config_year.pit_non_refundable_tax_credits
@@ -471,7 +467,6 @@ class Country:
                 individuals_age=ind_ages,
                 individuals_corr_households=ind_corr_hh,
                 households_type=households.states.get("Type"),
-                households_n_adults=households.states.get("Number of Adults"),
             )
             taxable_pool = build_taxable_income_pool(pit_ctx)
             credit_pool = build_credit_base_pool(
@@ -1575,7 +1570,6 @@ class Country:
             individuals_age=ind_ages,
             individuals_corr_households=ind_corr_hh,
             households_type=self.households.states.get("Type"),
-            households_n_adults=self.households.states.get("Number of Adults"),
         )
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
         credit_base_per_ind = build_credit_base_pool(
@@ -1590,9 +1584,6 @@ class Country:
                 self.households.states["Tenure Status of the Main Residence"] == 3
             ].sum(),
             current_income_financial_assets=self.households.ts.current("income_financial_assets"),
-            # For the direct-call fallback; the main path uses the pools below.
-            current_ind_rental_income=rental_income_per_individual,
-            current_ind_financial_income=financial_income_per_individual,
             current_ind_activity=self.individuals.states["Activity Status"],
             current_ind_realised_cons=self.households.ts.current("consumption"),
             current_bank_profits=self.banks.ts.current("profits"),
@@ -1605,7 +1596,6 @@ class Country:
             current_total_exports=self.economy.ts.current("exports_before_taxes").sum(),
             taxable_income_per_ind=taxable_income_per_ind,
             credit_base_per_ind=credit_base_per_ind,
-            grossed_up_dividend_per_ind=grossed_up_dividend_per_ind,
             direct_credits_per_ind=dividend_tax_credit_per_ind,
         )
 

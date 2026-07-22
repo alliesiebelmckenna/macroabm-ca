@@ -40,7 +40,7 @@ class PitContext:
 
     Units invariant: every monetary field is in agent-level dollars. The policy
     dollars the pools are compared against (brackets, credit amounts, clawback
-    bounds, deductions) are converted to the same units at construction by
+    bounds) are converted to the same units at construction by
     ``country._scale_pit_policy``, so a new income stream added here must already
     be in agent dollars.
     """
@@ -58,7 +58,6 @@ class PitContext:
     individuals_age: np.ndarray | None = None
     individuals_corr_households: np.ndarray | None = None
     households_type: np.ndarray | None = None
-    households_n_adults: np.ndarray | None = None
 
 
 def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
@@ -193,9 +192,8 @@ def _household_context(
     """
     corr = ctx.individuals_corr_households
     hh_type = ctx.households_type
-    hh_n_adults = ctx.households_n_adults
 
-    if corr is None or hh_type is None or hh_n_adults is None:
+    if corr is None or hh_type is None:
         return _HouseholdContext(None, None, None)
 
     from macromodel.agents.households.household_properties import HouseholdType

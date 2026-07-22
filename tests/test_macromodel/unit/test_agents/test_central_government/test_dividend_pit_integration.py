@@ -146,7 +146,8 @@ class TestBankDividendCountryWiring:
             current_firm_industries=np.zeros(1, dtype=int),
             current_household_new_real_wealth=np.zeros(1),
             taxes_less_subsidies_rates=np.zeros(1),
-            grossed_up_dividend_per_ind=grossed_up,
+            taxable_income_per_ind=taxable,
+            credit_base_per_ind=np.zeros_like(taxable),
             direct_credits_per_ind=dtc,
         )
         actual_revenue = cg.ts.get_aggregate("taxes_income")[-1]

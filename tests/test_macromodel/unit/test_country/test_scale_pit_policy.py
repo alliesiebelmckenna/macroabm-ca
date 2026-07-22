@@ -4,9 +4,8 @@ Statutory tax parameters are published in per-person dollars while agent incomes
 are agent-level dollars (each synthetic agent represents ``scale`` people).
 These tests pin the single scaling seam:
 
-* brackets, credit currency fields (amount, clawback bounds), and the
-  taxable-income deduction are multiplied by ``scale``; rates, ages, years, and
-  dimensionless scalars are untouched;
+* brackets and credit currency fields (amount, clawback bounds) are multiplied
+  by ``scale``; rates, ages, years, and dimensionless scalars are untouched;
 * the conversion is reflection-driven off the ``unit`` field declarations, so a
   currency field added later is scaled automatically and an undeclared numeric
   field raises (fail-closed) instead of silently skipping the conversion;
@@ -54,7 +53,6 @@ def _pit_config(**overrides) -> CentralGovernmentConfiguration:
                 top=62450.0,
             ),
         ],
-        pit_taxable_income_deductions=500.0,
     )
     base.update(overrides)
     return CentralGovernmentConfiguration(**base)

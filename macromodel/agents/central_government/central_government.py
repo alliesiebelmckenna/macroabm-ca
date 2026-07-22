@@ -13,7 +13,7 @@ The central government plays a crucial role in:
 - Public finance management
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import h5py
 import numpy as np
@@ -23,11 +23,6 @@ from macro_data.processing import TaxData
 from macromodel.agents.agent import Agent
 from macromodel.agents.central_government.central_government_ts import (
     create_central_government_timeseries,
-)
-from macromodel.agents.central_government.pit_pools import (
-    PitContext,
-    build_credit_base_pool,
-    build_taxable_income_pool,
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.configurations import CentralGovernmentConfiguration
@@ -46,7 +41,6 @@ def pit_credit_defs_to_state_dicts(pit_non_refundable_tax_credits) -> list[dict]
         {
             "credit": t.credit,
             "amount": t.amount,
-            "index": t.index,
             "age_min": t.eligibility_age_min,
             "clawback": t.clawback,
             "top": t.top,
@@ -160,8 +154,6 @@ class CentralGovernment(Agent):
             brackets = np.array(configuration.pit_brackets, dtype=float)
             states["pit_uppers"] = brackets[:, 0]
             states["pit_rates"] = brackets[:, 1]
-            if configuration.pit_taxable_income_deductions is not None:
-                states["pit_taxable_income_deductions"] = configuration.pit_taxable_income_deductions
             if configuration.pit_non_refundable_tax_credits is not None:
                 states["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                     configuration.pit_non_refundable_tax_credits
@@ -305,15 +297,8 @@ class CentralGovernment(Agent):
         current_total_exports: float = 0.0,
         # New tax-layer parameters are appended after every upstream parameter,
         # so a positional caller of the original signature still binds correctly.
-        current_ind_rental_income: np.ndarray | None = None,
-        current_ind_financial_income: np.ndarray | None = None,
-        individuals_age: np.ndarray | None = None,
-        individuals_corr_households: np.ndarray | None = None,
-        households_type: np.ndarray | None = None,
-        households_n_adults: np.ndarray | None = None,
         taxable_income_per_ind: np.ndarray | None = None,
         credit_base_per_ind: np.ndarray | None = None,
-        grossed_up_dividend_per_ind: np.ndarray | None = None,
         direct_credits_per_ind: np.ndarray | None = None,
     ) -> None:
         """Calculate all tax revenues for the current period.
@@ -325,8 +310,8 @@ class CentralGovernment(Agent):
         - Capital formation and export taxes
 
         Progressive PIT consumes the pre-assembled taxable-income and credit-base
-        pools; when they are not supplied, they are assembled here from the raw
-        income and household-context arguments.
+        pools; both are required, since only the processing phase holds the
+        household context and the dividend items they depend on.
 
         Args:
             current_ind_employee_income (np.ndarray): Employee incomes per individual
@@ -342,19 +327,10 @@ class CentralGovernment(Agent):
             current_household_new_real_wealth (np.ndarray): New wealth
             taxes_less_subsidies_rates (np.ndarray): Net tax rates
             current_total_exports (float): Total exports
-            current_ind_rental_income (Optional[np.ndarray]): Gross rental income
-                per individual. Used only in the direct-call fallback; ignored
-                when the pools are passed.
-            current_ind_financial_income (Optional[np.ndarray]): Financial income
-                per individual. Fallback-only.
-            individuals_age (Optional[np.ndarray]): Age per individual
-            individuals_corr_households (Optional[np.ndarray]): Household ID per individual
-            households_type (Optional[np.ndarray]): HouseholdType enum per household
-            households_n_adults (Optional[np.ndarray]): Number of adults per household
-            taxable_income_per_ind (Optional[np.ndarray]): Pool A — pre-assembled
-                taxable income per individual. Built internally when omitted.
-            credit_base_per_ind (Optional[np.ndarray]): Pool B — pre-assembled
-                non-refundable credit base per individual. Built internally when omitted.
+            taxable_income_per_ind (np.ndarray): Pool A, the taxable income per
+                individual, assembled by the processing phase. Required.
+            credit_base_per_ind (np.ndarray): Pool B, the non-refundable credit
+                base per individual, assembled by the processing phase. Required.
         """
         # Taxes on production
         self.ts.taxes_production.append(
@@ -388,28 +364,16 @@ class CentralGovernment(Agent):
         pit_rates = self.states.get("pit_rates")
 
         if pit_uppers is not None and pit_rates is not None:
-            # Assemble any pool not supplied by the processing phase; each is
-            # built independently so taxable income alone still applies credits.
+            # The pools are assembled by the processing phase, which alone holds
+            # the household context and the dividend items. Assembling them here
+            # instead would let a caller supply a grossed-up dividend without its
+            # matching credit, over-taxing silently, so a missing pool raises.
             if taxable_income_per_ind is None or credit_base_per_ind is None:
-                ctx = PitContext(
-                    employee_income=current_ind_employee_income,
-                    employee_si_rate=float(self.states["Employee Social Insurance Tax"]),
-                    rental_income=current_ind_rental_income,
-                    financial_income=current_ind_financial_income,
-                    grossed_up_dividend=grossed_up_dividend_per_ind,
-                    individuals_age=individuals_age,
-                    individuals_corr_households=individuals_corr_households,
-                    households_type=households_type,
-                    households_n_adults=households_n_adults,
+                raise ValueError(
+                    "Progressive PIT requires both pools. Assemble them with "
+                    "pit_pools.build_taxable_income_pool and "
+                    "pit_pools.build_credit_base_pool at the call site."
                 )
-                if taxable_income_per_ind is None:
-                    taxable_income_per_ind = build_taxable_income_pool(ctx)
-                if credit_base_per_ind is None:
-                    credit_base_per_ind = build_credit_base_pool(
-                        self.states.get("pit_non_refundable_tax_credits"),
-                        taxable_income_per_ind,
-                        ctx,
-                    )
 
             total_income_tax = self.compute_pit(
                 taxable_income_per_ind, credit_base_per_ind, direct_credits_per_ind
@@ -442,7 +406,7 @@ class CentralGovernment(Agent):
         credit_base_per_ind: np.ndarray | None = None,
         direct_credits_per_ind: np.ndarray | None = None,
     ) -> float:
-        """Apply fixed PIT policy (deductions, brackets, credits) to the assembled pools.
+        """Apply fixed PIT policy (brackets, credits) to the assembled pools.
 
         The government's tax core; it references no income streams or specific
         credits, so extending either in ``pit_pools`` leaves it untouched. As a side
@@ -463,14 +427,8 @@ class CentralGovernment(Agent):
         pit_uppers = self.states["pit_uppers"]
         pit_rates = self.states["pit_rates"]
 
-        # Deductions reduce the base before the brackets.
-        deductions = self.states.get("pit_taxable_income_deductions")
-        base_for_brackets = taxable_income_per_ind
-        if deductions is not None and deductions > 0:
-            base_for_brackets = np.maximum(0.0, taxable_income_per_ind - deductions)
-
         pit_per_individual = compute_personal_income_tax(
-            base_for_brackets, pit_uppers, pit_rates
+            taxable_income_per_ind, pit_uppers, pit_rates
         )
 
         # Non-refundable credits, floored at zero (excess is lost, not refunded).
@@ -547,12 +505,6 @@ class CentralGovernment(Agent):
         self.states["pit_uppers"] = fragment["pit_uppers"]
         self.states["pit_rates"] = fragment["pit_rates"]
         # Clear on absence so a field omitted this year drops any stale value.
-        if "pit_taxable_income_deductions" in fragment:
-            self.states["pit_taxable_income_deductions"] = fragment[
-                "pit_taxable_income_deductions"
-            ]
-        else:
-            self.states.pop("pit_taxable_income_deductions", None)
         if "pit_non_refundable_tax_credits" in fragment:
             self.states["pit_non_refundable_tax_credits"] = fragment["pit_non_refundable_tax_credits"]
         else:

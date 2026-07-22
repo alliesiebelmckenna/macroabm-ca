@@ -1,18 +1,19 @@
 """Module for producing a non-refundable tax credit (NRTC) schedule.
 
 This module reads per-credit definitions (base amounts, eligibility rules,
-index flags) from a consolidated ``non_refundable_tax_credits.csv`` keyed by
+phaseout thresholds) from a consolidated ``non_refundable_tax_credits.csv`` keyed by
 tax year and jurisdiction, and supplies the published credit components for a
 requested year. The ``NRTCSchedule`` class is the companion to
 ``PITSchedule``: an individual's eligible credit bases are summed and valued at
 the bottom marginal rate, then subtracted from gross tax.
 
-Each credit is mapped internally to an eligibility rule — the Personal
-Amount is universal, the Age Amount is age-gated, the Spousal and Equivalent To
-Spouse amounts are household-tested; other known BC credits are recorded but
-deferred until the model carries their eligibility signal. Lookups are
-statutory only: a requested year must be published in the CSV, since the
-schedule is never projected past the years it records.
+Only the credits the runtime can express are registered here — the Personal
+Amount is universal, the Age Amount is age-gated, and the Spousal and Equivalent
+To Spouse amounts are household-tested. Any other credit the CSV publishes is
+unregistered: it is marked unmapped on load and dropped by the configuration
+builder, so it is never granted. Lookups are statutory only: a requested year
+must be published in the CSV, since the schedule is never projected past the
+years it records.
 """
 
 from __future__ import annotations
@@ -21,37 +22,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
 
 # Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
     "year",  # taxation year the row applies to
     "jurisdiction",  # jurisdiction key (e.g. "BC")
     "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
-    "index",     # whether the amount is statutorily indexed
+    "index",     # schema check only: required for shape, no longer read
 }
 
 
 # Maps each credit to a dict of eligibility rules; an individual is
 # eligible when all rules in the dict are satisfied. Expand as credits activate.
+#
+# Only credits the runtime can express are registered. A credit published in the
+# schedule but absent here is unmapped: the builder drops it and the runtime
+# credit pool contributes zero, so an unexpressible credit is never granted
+# universally. Register a credit here only together with its runtime branch.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
-    # Active: eligibility the runtime credit pool can express today.
     "Personal Amount":          {},                                     # universal
     "Age Amount":               {"age_min": 65},
     "Spousal Amount":           {"in_couple_household": True},          # married / common-law
     "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
-    # Deferred: known BC credits whose eligibility signal the model does not yet
-    # carry, so the builder skips them. Trailing notes flag nuances to resolve
-    # before activating one.
-    "Pension Income Amount":    {"has_eligible_pension_income": True},  # lesser of $1000 or actual eligible pension income; NOT age-based (CPP may start 60-70, also covers non-CPP pension)
-    "B.C. Caregiver Amount":        {"is_caregiver": True},            # caring for a dependant with impairment; clawed back on the dependant's income
-    "Disability Amount":            {"has_disability": True},          # DTC-eligible individual
-    "Disability Amount (Child)":    {"has_disability_dependant": True},# supplement for a dependant under 18 with a disability
-    "Adoption Amount":              {"has_adoption_expense": True},    # event-based: amount column is the MAX eligible expense, not a flat base
-    "Volunteer Firefighter Amount": {"is_volunteer_first_responder": True},  # 200+ volunteer hours
-    "Medical Expense Amount":       {"has_medical_expense": True},     # formula: expenses minus lesser(3% net income, cap); amount column blank
-    "BC Tax Reduction Credit":      {"is_income_tested_reduction": True},  # direct $ reduction, NOT base x rate; reduced by 3.56% of net income over threshold
 }
 
 
@@ -62,20 +54,18 @@ class TaxCreditComponent:
     Attributes:
         credit: Human-readable credit name (e.g. ``"Age Amount"``).
         amount: Base dollar amount in the base tax year.
-        index: Whether the amount is statutorily indexed.  Recorded for
-            reference only; not consumed anywhere (there is no forward
-            projection).
         eligibility: Dict of eligibility rules (e.g. ``{"age_min": 65}``).
             Empty dict means universal.
-        clawback: Income of spouse/dependent at which clawback
-            begins.  None means no clawback.
-        top: Income of spouse/dependent at which the credit
-            is fully eliminated.  None means no cap.
+        clawback: Income at which the phaseout begins.  Whose income depends
+            on the credit: own income for the Age Amount, the spouse's for the
+            Spousal Amount.  None means no clawback.
+        top: Income at which the credit is fully eliminated.  Where a credit
+            publishes no clawback, this carries the exemption implicitly as
+            ``top - amount``.  None means no cap.
     """
 
     credit: str
     amount: float
-    index: bool = True
     eligibility: dict[str, object] = field(default_factory=dict)
     clawback: Optional[float] = None
     top: Optional[float] = None
@@ -157,8 +147,6 @@ class NRTCSchedule:
             # Keep $0 credits: they carry the eligibility wiring with no
             # revenue impact by default.
 
-            index = bool(int(row["index"])) if not pd.isna(row["index"]) else True
-
             # Parse optional clawback fields (spousal / dependent income tests).
             clawback: Optional[float] = None
             raw_cs = row.get("clawback")
@@ -181,7 +169,6 @@ class NRTCSchedule:
                 TaxCreditComponent(
                     credit=credit,
                     amount=amount,
-                    index=index,
                     eligibility=eligibility,
                     clawback=clawback,
                     top=top,
