@@ -5,8 +5,8 @@ progressive PIT schedule to the current calendar year, swapping in that year's
 published brackets and credits. The per-year schedule table is assembled in
 ``country._build_pit_schedule_by_year`` and stashed on the government agent as
 ``states["pit_schedule_by_year"]``; each timestep the hook calls
-``CentralGovernment.set_pit_for_year`` to swap in the brackets, rates, credits,
-and deductions published for the current year. The lookup is a pure, idempotent
+``CentralGovernment.set_pit_for_year`` to swap in the brackets, rates, credits
+and per-year scalars published for the current year. The lookup is a pure, idempotent
 assignment, so running it every timestep is cheap.
 
 The hook self-gates on data presence: a government with no schedule table (flat

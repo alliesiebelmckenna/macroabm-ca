@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pytest
 
@@ -150,6 +152,46 @@ class TestCentralGovernmentPIT:
                 # Pool A supplied, Pool B omitted.
                 taxable_income_per_ind=taxable,
             )
+
+    def test_non_finite_pool_raises_rather_than_freezing_the_rate(
+        self, test_central_government_pit_full,
+    ):
+        """A NaN in the pools must not leave a plausible rate beside NaN revenue.
+
+        The effective-rate guard is ``total_taxable_base > 0``, which is False
+        for NaN, so without an explicit check the rate would silently hold its
+        previous value while taxes_income recorded NaN and carried it into
+        deficit and accumulating debt.
+        """
+        cg = test_central_government_pit_full
+        with pytest.raises(ValueError, match="non-finite"):
+            cg.compute_pit(np.array([50000.0, float("nan")]), np.zeros(2))
+
+    def test_construction_precalibration_skips_and_warns_on_a_non_finite_pool(
+        self, test_central_government_pit_full, caplog
+    ):
+        """Construction pre-calibration tolerates a non-finite income pool.
+
+        A NaN pool at construction means a jurisdiction's synthetic income data
+        carries one (small-province zero-wage firms, 2026-07-22). Rather than
+        abort the whole multi-province build, pre-calibration warns — naming the
+        jurisdiction — and skips it, leaving the flat Income Tax rate. The
+        runtime guard in compute_pit stays hard; this tolerance is
+        construction-only.
+        """
+        from macromodel.country.country import _precalibrate_income_tax
+
+        cg = test_central_government_pit_full
+        flat_rate = float(cg.states["Income Tax"])
+        taxable = np.array([50000.0, float("nan")])
+        credits = np.zeros(2)
+
+        with caplog.at_level(logging.WARNING):
+            # Must not raise, unlike a direct compute_pit on the same pool.
+            _precalibrate_income_tax(cg, taxable, credits, "CAN_XX")
+
+        assert float(cg.states["Income Tax"]) == pytest.approx(flat_rate)
+        assert any("CAN_XX" in r.getMessage() for r in caplog.records)
 
     def test_tax_credits_floor_at_zero(
         self, test_central_government_pit_full,

@@ -90,6 +90,9 @@ def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
     # pool = pool + ctx.pension_income            # ← example: new stream
     # pool = pool + ctx.capital_gains * 0.5       # ← example: inclusion rate
 
+    # Social transfers are deliberately outside the taxable pool; they are not
+    # a missing stream.
+
     return pool
 
 
@@ -176,7 +179,7 @@ class _HouseholdContext:
 
     in_couple: np.ndarray | None
     is_single_parent: np.ndarray | None
-    spouse_income: np.ndarray | None  # the OTHER adult's taxable base; inf if none
+    spouse_income: np.ndarray | None  # the other spouse's taxable base; inf if none
 
 
 def _household_context(
@@ -186,9 +189,11 @@ def _household_context(
 ) -> _HouseholdContext:
     """Build couple / single-parent flags and spouse-income per individual.
 
-    Spouse income is the other adult's taxable base in a two-adult couple
-    household, and ``inf`` for everyone else (so an income-tested credit
-    clamps to zero where there is no spouse).
+    Spouse income is the other spouse's taxable base in a couple household, and
+    ``inf`` for everyone else (so an income-tested credit clamps to zero where
+    there is no spouse). The two eldest adults are taken as the spouses, so a
+    resident adult child neither blocks the pairing nor joins it; without ages
+    only unambiguous two-member couples are paired.
     """
     corr = ctx.individuals_corr_households
     hh_type = ctx.households_type
@@ -209,15 +214,17 @@ def _household_context(
 
     hh_of_ind = np.asarray(corr).astype(int)
     hh_type_of_ind = np.array(
-        [hh_type[h] if h < len(hh_type) else None for h in hh_of_ind]
+        # Bounded on both sides: a negative sentinel (an unassigned household)
+        # is a legal numpy index and would otherwise borrow the last household.
+        [hh_type[h] if 0 <= h < len(hh_type) else None for h in hh_of_ind]
     )
 
     in_couple = np.array([t in couple_types for t in hh_type_of_ind])
     is_single_parent = np.array([t in single_parent_types for t in hh_type_of_ind])
 
-    # Spouse income is the other adult's taxable base in a two-adult couple, inf
-    # elsewhere. Pairing is over adults (age >= 18) only, since the individual
-    # array includes children.
+    # Spouse income is the other spouse's taxable base in a couple household,
+    # inf elsewhere. Pairing is over adults (age >= 18) only, since the
+    # individual array includes children.
     spouse_income = np.full(n_ind, np.inf)
 
     ages = ctx.individuals_age
@@ -229,14 +236,26 @@ def _household_context(
         adult_idx = np.arange(n_ind)
 
     adult_hh = hh_of_ind[adult_idx]
-    order = np.argsort(adult_hh, kind="stable")
+    if ages is not None:
+        # Eldest first within each household, so the two spouses sort ahead of
+        # any resident adult child. Age is the available proxy: the model
+        # records no spousal link.
+        order = np.lexsort((-np.asarray(ages)[adult_idx], adult_hh))
+        # A third adult is a resident adult child. Tax is assessed per person,
+        # so their presence must not disturb the couple's own credits.
+        allow_extra_adults = True
+    else:
+        # Without ages, adults cannot be told from children, so an extra member
+        # is indistinguishable from a spouse; pair only unambiguous couples.
+        order = np.argsort(adult_hh, kind="stable")
+        allow_extra_adults = False
+
     sorted_idx = adult_idx[order]
     _, group_start, group_counts = np.unique(
         adult_hh[order], return_index=True, return_counts=True
     )
 
-    # Couple households with exactly two adults.
-    pair_groups = group_counts == 2
+    pair_groups = group_counts >= 2 if allow_extra_adults else group_counts == 2
     first = sorted_idx[group_start[pair_groups]]
     second = sorted_idx[group_start[pair_groups] + 1]
 
@@ -250,6 +269,77 @@ def _household_context(
     spouse_income[second] = taxable_income_per_ind[first]
 
     return _HouseholdContext(in_couple, is_single_parent, spouse_income)
+
+
+def _published_exemption(tc: dict, amount: float) -> float:
+    """Income a spouse or dependant may earn before the credit starts tapering.
+
+    The Spousal Amount and the eligible-dependant credit share this mechanism
+    but publish it differently: one carries an explicit ``clawback``, the other
+    implies it as ``top - amount``. Deriving it here means neither branch loses
+    the threshold when its jurisdiction publishes only the other column. The
+    two credits keep their own rows, so they may still differ in value.
+    """
+    clawback = tc.get("clawback")
+    if clawback is not None:
+        return float(clawback)
+    top = tc.get("top")
+    if top is not None:
+        return max(0.0, float(top) - amount)
+    return 0.0
+
+
+def _sole_claimant_credit(
+    amount: float,
+    exemption: float,
+    ages: np.ndarray,
+    hh_of_ind: np.ndarray,
+    is_single_parent: np.ndarray,
+    taxable_income_per_ind: np.ndarray,
+    n_ind: int,
+) -> np.ndarray:
+    """Grant *amount* once per qualifying household, to its eldest adult.
+
+    A household qualifies when it is single-parent typed and contains at least
+    one individual under 18. The eldest adult stands in for the supporting
+    parent: the model records no parent-child link, so age is the available
+    proxy. Households with no minor return nothing.
+
+    The claim is reduced by the dependant's income above *exemption*. A filer
+    may claim for one dependant, so the lowest-income minor is used — the choice
+    that yields the largest credit, and the one a filer would make.
+    """
+    adult = ages >= 18
+    dependants = np.where(is_single_parent & ~adult)[0]
+    base = np.zeros(n_ind)
+    if dependants.size == 0:
+        return base
+
+    qualifying_hh = np.unique(hh_of_ind[dependants])
+    claimants = np.where(
+        adult & is_single_parent & np.isin(hh_of_ind, qualifying_hh)
+    )[0]
+    if claimants.size == 0:
+        return base
+
+    # Group by household, eldest first, then keep each group's first member.
+    ordered = claimants[np.lexsort((-ages[claimants], hh_of_ind[claimants]))]
+    _, first_in_group = np.unique(hh_of_ind[ordered], return_index=True)
+    claimant_idx = ordered[first_in_group]
+
+    # Likewise per household, poorest dependant first.
+    dep_ordered = dependants[
+        np.lexsort((taxable_income_per_ind[dependants], hh_of_ind[dependants]))
+    ]
+    dep_hh, dep_first = np.unique(hh_of_ind[dep_ordered], return_index=True)
+    dep_income = taxable_income_per_ind[dep_ordered[dep_first]]
+
+    # Every claimant's household holds a dependant, so the lookup always hits.
+    matched = dep_income[np.searchsorted(dep_hh, hh_of_ind[claimant_idx])]
+    base[claimant_idx] = np.maximum(
+        0.0, amount - np.maximum(0.0, matched - exemption)
+    )
+    return base
 
 
 def _credit_amount(
@@ -285,27 +375,52 @@ def _credit_amount(
         eligible = ages >= age_min
         cs = tc.get("clawback")
         cc = tc.get("top")
-        if cs is not None and cc is not None and cc > cs:
-            clawback_rate = amount / (cc - cs)
-            excess = np.maximum(0.0, taxable_income_per_ind - cs)
-            return np.where(
-                eligible, np.maximum(0.0, amount - clawback_rate * excess), 0.0
+        if cs is None and cc is None:
+            # No phaseout published: a genuinely unphased age credit.
+            return np.where(eligible, amount, 0.0)
+        if cs is None or cc is None or cc <= cs:
+            # A half-published phaseout is a data error, not an unphased credit.
+            # Falling back to the full amount here would over-credit every
+            # eligible filer above the threshold, silently and by the whole
+            # taper, so it fails loudly instead.
+            raise ValueError(
+                f"Age Amount publishes an incomplete phaseout (clawback={cs}, "
+                f"top={cc}). Both are required, and top must exceed clawback."
             )
-        return np.where(eligible, amount, 0.0)
+        clawback_rate = amount / (cc - cs)
+        excess = np.maximum(0.0, taxable_income_per_ind - cs)
+        return np.where(
+            eligible, np.maximum(0.0, amount - clawback_rate * excess), 0.0
+        )
 
-    # Spousal Amount: max(0, base - spouse_income); spouse_income is inf for
-    # non-couples so they clamp to zero.
+    # Spousal Amount: the base less the spouse's income above the published
+    # exemption. spouse_income is inf for non-couples so they clamp to zero.
     if credit == "Spousal Amount":
         if household.in_couple is None or household.spouse_income is None:
             return zeros
-        return np.maximum(0.0, amount - household.spouse_income)
+        exemption = _published_exemption(tc, amount)
+        excess = np.maximum(0.0, household.spouse_income - exemption)
+        return np.maximum(0.0, amount - excess)
 
-    # Equivalent To Spouse Amount: single parents only. The dependant has no
-    # income in the model, so the full base applies where eligible.
+    # Equivalent To Spouse Amount: one claim per single-parent household
+    # supporting a minor child, taken by the parent. The exception for a dependant
+    # aged 18 or over with an infirmity is not expressed, because the
+    # model carries no infirmity signal; a household whose children have all
+    # reached 18 is therefore treated as ineligible rather than granted it.
     if credit == "Equivalent To Spouse Amount":
-        if household.is_single_parent is None:
+        corr = ctx.individuals_corr_households
+        if household.is_single_parent is None or ages is None or corr is None:
             return zeros
-        return np.where(household.is_single_parent, amount, 0.0)
+        exemption = _published_exemption(tc, amount)
+        return _sole_claimant_credit(
+            amount,
+            exemption,
+            np.asarray(ages),
+            np.asarray(corr).astype(int),
+            household.is_single_parent,
+            taxable_income_per_ind,
+            n_ind,
+        )
 
     # Other age-gated credits (age_min set, not Age Amount).
     if age_min is not None:

@@ -6,6 +6,7 @@ tax policy.
 """
 
 import numpy as np
+import pytest
 
 from macromodel.agents.central_government.pit_pools import (
     PitContext,
@@ -75,14 +76,20 @@ class TestCreditBasePool:
 
 
     def test_equivalent_to_spouse_amount_single_parent_only(self):
-        """The eligible-dependant credit applies only to single parents."""
+        """The eligible-dependant credit applies only to single parents.
+
+        ind0/ind1 are a parent and their minor child; ind2 is a lone adult on
+        the same income, so the credit turns on household type rather than on
+        income or age alone.
+        """
         from macromodel.agents.households.household_properties import HouseholdType
 
-        taxable = np.array([30000.0, 30000.0])
+        taxable = np.array([30000.0, 0.0, 30000.0])
         ctx = PitContext(
             employee_income=taxable,
             employee_si_rate=0.0,
-            individuals_corr_households=np.array([0, 1]),
+            individuals_age=np.array([45, 10, 30]),
+            individuals_corr_households=np.array([0, 0, 1]),
             households_type=np.array(
                 [
                     HouseholdType.SINGLE_PARENT_WITH_CHILDREN,  # hh0 = single parent
@@ -94,7 +101,7 @@ class TestCreditBasePool:
         credit_defs = [{"credit": "Equivalent To Spouse Amount", "amount": 12000.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # Only the single parent (ind0) is eligible.
-        np.testing.assert_allclose(base, [12000.0, 0.0])
+        np.testing.assert_allclose(base, [12000.0, 0.0, 0.0])
 
 
     def test_age_amount_only_for_eligible_age_with_clawback(self):
@@ -214,4 +221,95 @@ class TestUnmappedCreditFailClosed:
             credit_defs, np.array([50000.0, 20000.0]), self._ctx()
         )
         np.testing.assert_array_equal(pool, [0.0, 0.0])
+
+
+# Published BC 2014 amounts, from non_refundable_tax_credits.csv.
+_SPOUSAL_2014 = {
+    "credit": "Spousal Amount", "amount": 8450.0, "clawback": 845.0, "top": 9295.0,
+}
+_ETS_2014 = {
+    "credit": "Equivalent To Spouse Amount", "amount": 8450.0, "top": 9295.0,
+}
+
+
+def _household_ctx(incomes, ages, household_type):
+    """One household holding every listed individual."""
+    incomes = np.asarray(incomes, dtype=float)
+    return PitContext(
+        employee_income=incomes,
+        employee_si_rate=0.0,
+        individuals_age=np.asarray(ages),
+        individuals_corr_households=np.zeros(len(incomes), dtype=int),
+        households_type=np.array([household_type], dtype=object),
+    )
+
+
+class TestSpousalAmountHonoursItsSchedule:
+    """The Spousal Amount tapers against the spouse's income above the
+    published exemption, not from the spouse's first dollar."""
+
+    def test_spouse_income_below_the_exemption_leaves_the_credit_whole(self):
+        from macromodel.agents.households.household_properties import HouseholdType
+
+        # Spouse earns 500, inside the published 845 exemption.
+        ctx = _household_ctx(
+            [40000.0, 500.0], [45, 43],
+            HouseholdType.TWO_ADULTS_YOUNGER_THAN_65,
+        )
+        taxable = build_taxable_income_pool(ctx)
+        base = build_credit_base_pool([_SPOUSAL_2014], taxable, ctx)
+        # The claimant keeps the full base; only the spouse's income above
+        # 845 reduces it, and there is none.
+        assert base[0] == pytest.approx(8450.0)
+
+
+class TestCoupleWithAnAdditionalAdult:
+    """A couple-typed household is paired on its type, not on containing
+    exactly two adults — a resident adult child must not void the credit."""
+
+    def test_third_adult_does_not_void_the_spousal_amount(self):
+        from macromodel.agents.households.household_properties import HouseholdType
+
+        # Two spouses plus an 18-year-old still at home.
+        ctx = _household_ctx(
+            [0.0, 60000.0, 0.0], [45, 43, 18],
+            HouseholdType.TWO_ADULTS_WITH_ONE_CHILD,
+        )
+        taxable = build_taxable_income_pool(ctx)
+        base = build_credit_base_pool([_SPOUSAL_2014], taxable, ctx)
+        # The earner claims against a spouse with no income.
+        assert base.sum() > 0.0
+
+
+class TestEquivalentToSpouseEligibility:
+    """One claim per single-parent household supporting a minor child.
+
+    The exception for a dependant aged 18 or over with an infirmity is not
+    expressed: the model carries no infirmity signal, so a household whose
+    children have all reached 18 is treated as ineligible.
+    """
+
+    def test_parent_of_a_minor_claims_once(self):
+        from macromodel.agents.households.household_properties import HouseholdType
+
+        ctx = _household_ctx(
+            [40000.0, 0.0], [45, 10],
+            HouseholdType.SINGLE_PARENT_WITH_CHILDREN,
+        )
+        taxable = build_taxable_income_pool(ctx)
+        base = build_credit_base_pool([_ETS_2014], taxable, ctx)
+        np.testing.assert_allclose(base, [8450.0, 0.0])
+
+    def test_dependant_income_above_the_exemption_reduces_the_claim(self):
+        from macromodel.agents.households.household_properties import HouseholdType
+
+        # BC 2014 publishes ETS as amount 8450 / top 9295, i.e. an implied 845
+        # exemption. A minor earning 2000 reduces the parent's claim by 1155.
+        ctx = _household_ctx(
+            [40000.0, 2000.0], [45, 16],
+            HouseholdType.SINGLE_PARENT_WITH_CHILDREN,
+        )
+        taxable = build_taxable_income_pool(ctx)
+        base = build_credit_base_pool([_ETS_2014], taxable, ctx)
+        np.testing.assert_allclose(base, [8450.0 - (2000.0 - 845.0), 0.0])
 

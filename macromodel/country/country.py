@@ -44,6 +44,7 @@ from macromodel.agents.banks.banks import Banks
 from macromodel.agents.central_bank.central_bank import CentralBank
 from macromodel.agents.central_government.central_government import (
     CentralGovernment,
+    PIT_PER_YEAR_SCALARS,
     pit_credit_defs_to_state_dicts,
 )
 from macromodel.agents.central_government.pit_pools import (
@@ -121,10 +122,11 @@ def _build_pit_schedule_by_year(
 ) -> Optional[dict[int, dict]]:
     """Build the ``{year: state_fragment}`` PIT schedule table for every published year.
 
-    Each fragment holds that year's agent-scaled uppers, rates, credits, and
-    deduction, which ``CentralGovernment.set_pit_for_year`` swaps into the agent
-    states as the calendar year advances. Returns ``None`` when progressive PIT
-    is not opted in or no taxation data is present.
+    Each fragment holds that year's agent-scaled uppers, rates and credits, plus
+    the per-year scalars in ``PIT_PER_YEAR_SCALARS`` (the dividend gross-up / DTC
+    rates and the YAML assumptions), which ``CentralGovernment.set_pit_for_year``
+    swaps into the agent states as the calendar year advances. Returns ``None``
+    when progressive PIT is not opted in or no taxation data is present.
     """
     if taxation_reader is None or not base_config.activate_progressive_pit:
         return None
@@ -154,12 +156,40 @@ def _build_pit_schedule_by_year(
             fragment["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                 config_year.pit_non_refundable_tax_credits
             )
+        for name in PIT_PER_YEAR_SCALARS:
+            value = getattr(config_year, name, None)
+            if value is not None:
+                fragment[name] = value
         table[year] = fragment
 
     if not table:
         return None
 
     return table
+
+
+def _precalibrate_income_tax(
+    central_government, taxable_pool, credit_pool, country_name: str
+) -> None:
+    """Set the t=0 effective Income Tax rate from the assembled pools.
+
+    Pre-calibration only removes the first-period calibration shock; it is not
+    load-bearing. A non-finite pool means this jurisdiction's synthetic income
+    data carries a NaN, so warn (naming the jurisdiction) and skip rather than
+    abort the whole build, leaving ``states["Income Tax"]`` at the flat rate it
+    already holds. The runtime guard in ``compute_pit`` still aborts on a live
+    NaN.
+    """
+    if np.isfinite(taxable_pool).all() and np.isfinite(credit_pool).all():
+        central_government.compute_pit(taxable_pool, credit_pool)
+    else:
+        logging.warning(
+            "%s: PIT pre-calibration skipped — the construction income pool "
+            "contains a non-finite value, so the t=0 effective rate falls back "
+            "to the flat Income Tax. Check this jurisdiction's synthetic income "
+            "data for NaN.",
+            country_name,
+        )
 
 
 class Country:
@@ -474,7 +504,22 @@ class Country:
                 taxable_pool,
                 pit_ctx,
             )
-            central_government.compute_pit(taxable_pool, credit_pool)
+            _precalibrate_income_tax(
+                central_government, taxable_pool, credit_pool, country_name
+            )
+
+        # Both the schedule table and the effective rate compute_pit just set
+        # were written after ``Agent.__init__`` snapshotted ``initial_states``,
+        # so ``reset()`` would restore a government with neither: the pre-hook
+        # would find no table and hold the construction year's brackets for the
+        # whole run, and the rate would revert to the flat one this block exists
+        # to replace. Fold them into the snapshot so a reset run is the same
+        # model as a fresh one.
+        for key in ("pit_schedule_by_year", "Income Tax"):
+            if key in central_government.states:
+                central_government.initial_states[key] = deepcopy(
+                    central_government.states[key]
+                )
 
         government_entities = GovernmentEntities.from_pickled_agent(
             synthetic_government_entities=synthetic_country.government_entities,

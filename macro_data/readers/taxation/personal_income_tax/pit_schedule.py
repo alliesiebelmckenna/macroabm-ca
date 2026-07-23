@@ -241,6 +241,13 @@ def _validate_brackets(uppers: np.ndarray, rates: np.ndarray) -> None:
             f"uppers and rates must have the same length, "
             f"got {len(uppers)} and {len(rates)}"
         )
+    # NaN is invisible to every comparison below: it is neither < 0 nor > 1,
+    # and np.diff on a single bracket is not checked at all, so a NaN would
+    # validate cleanly and then produce NaN tax for the whole population.
+    if np.isnan(np.asarray(uppers, dtype=float)).any() or np.isnan(
+        np.asarray(rates, dtype=float)
+    ).any():
+        raise ValueError("bracket thresholds and rates must not be NaN")
     if len(uppers) > 1 and not np.all(np.diff(uppers) > 0):
         raise ValueError("uppers must be strictly increasing")
     if np.any(rates < 0) or np.any(rates > 1):

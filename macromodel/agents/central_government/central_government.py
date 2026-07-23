@@ -31,6 +31,22 @@ from macromodel.util.function_mapping import functions_from_model, update_functi
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
 
 
+# Configuration scalars the taxation schedule or ``tax_parameters.yaml`` can vary
+# by published year. Each must ride the per-year fragment, or it silently freezes
+# at the construction year while the brackets advance around it. Credits are
+# carried separately because they also clear on absence.
+PIT_PER_YEAR_SCALARS = (
+    "pit_dividend_integration",
+    "dividend_small_business_share",
+    "bank_dividend_small_business_share",
+    "dividend_eligible_gross_up",
+    "dividend_non_eligible_gross_up",
+    "dividend_eligible_dtc_rate",
+    "dividend_non_eligible_dtc_rate",
+    "couple_rental_income_split",
+)
+
+
 def pit_credit_defs_to_state_dicts(pit_non_refundable_tax_credits) -> list[dict]:
     """Convert configuration ``TaxCreditDef`` objects to the runtime credit dicts.
 
@@ -442,6 +458,15 @@ class CentralGovernment(Agent):
         total_income_tax = float(pit_per_individual.sum())
 
         total_taxable_base = float(taxable_income_per_ind.sum())
+        # A non-finite total means something upstream is broken. Falling through
+        # would leave states["Income Tax"] holding its previous value, since the
+        # guard below is False for NaN, so a plausible rate would sit beside NaN
+        # revenue that then accumulates into deficit and debt.
+        if not (np.isfinite(total_income_tax) and np.isfinite(total_taxable_base)):
+            raise ValueError(
+                f"PIT produced a non-finite result (tax={total_income_tax}, "
+                f"base={total_taxable_base}); check the income pools for NaN."
+            )
         if total_taxable_base > 0:
             self.states["Income Tax"] = total_income_tax / total_taxable_base
 
@@ -509,6 +534,12 @@ class CentralGovernment(Agent):
             self.states["pit_non_refundable_tax_credits"] = fragment["pit_non_refundable_tax_credits"]
         else:
             self.states.pop("pit_non_refundable_tax_credits", None)
+        # Year-varying scalars. Assigned but never popped: the dividend path
+        # indexes these states directly, so a missing year must hold the
+        # previous value rather than raise.
+        for name in PIT_PER_YEAR_SCALARS:
+            if name in fragment:
+                self.states[name] = fragment[name]
 
     def compute_revenue(
         self,

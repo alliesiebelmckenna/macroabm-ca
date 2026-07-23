@@ -90,6 +90,22 @@ class TestValidateBrackets:
 # 3. PITSchedule — class-level tests
 
 
+    def test_nan_is_rejected_in_thresholds_and_rates(self):
+        """NaN passes every range check, so it needs its own.
+
+        ``nan < 0`` and ``nan > 1`` are both False, so a NaN rate would
+        validate and then produce NaN tax for the whole population, which
+        propagates into revenue, deficit and accumulating debt.
+        """
+        nan = float("nan")
+        with pytest.raises(ValueError, match="must not be NaN"):
+            _validate_brackets(np.array([1000.0, np.inf]), np.array([nan, 0.2]))
+        # A single bracket skips the strictly-increasing check entirely, so the
+        # incidental protection NaN uppers used to get does not reach here.
+        with pytest.raises(ValueError, match="must not be NaN"):
+            _validate_brackets(np.array([nan]), np.array([0.1]))
+
+
 class TestPITSchedule:
     """Integration tests for the PITSchedule class."""
 

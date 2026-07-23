@@ -206,6 +206,70 @@ class TestCountry:
         )
         assert "pit_uppers" not in country.central_government.states
 
+    def test_reset_keeps_the_schedule_table_and_calibrated_rate(
+        self, datawrapper, tmp_path
+    ):
+        """A reset government must be the same model as a freshly built one.
+
+        ``Agent.__init__`` snapshots ``initial_states`` before
+        ``from_pickled_country`` injects the per-year schedule table and
+        pre-calibrates the effective rate. Unless both are folded into that
+        snapshot, a reset silently loses them: the pre-hook finds no table and
+        holds the construction year's brackets for the rest of the run, and the
+        rate reverts to the flat one the pre-calibration exists to replace.
+        """
+        (tmp_path / "rates_thresholds.csv").write_text(
+            "year,jurisdiction,lower,rate,index\n"
+            "2014,BC,0,0.0506,1\n2014,BC,37606,0.0770,1\n2014,BC,75213,0.1050,1\n"
+            "2016,BC,0,0.0600,1\n2016,BC,40000,0.0770,1\n2016,BC,80000,0.1050,1\n"
+        )
+        reader = TaxationReader.from_dir(tmp_path, jurisdiction="bc")
+
+        base = datawrapper.synthetic_countries["FRA"]
+        synthetic_country = dataclasses.replace(base, taxation=reader)
+        cg_config = CentralGovernmentConfiguration(activate_progressive_pit=True)
+        country_configuration = CountryConfiguration(central_government=cg_config)
+
+        emission_factors = np.array(
+            [
+                datawrapper.emission_factors["coal"],
+                datawrapper.emission_factors["gas"],
+                datawrapper.emission_factors["oil"],
+            ]
+        )
+        exchange_rates = ExchangeRates.from_data(
+            exchange_rates_data=datawrapper.exchange_rates,
+            exchange_rate_config=ExchangeRatesConfiguration(),
+            initial_year=2014,
+            country_names=["FRA"],
+        )
+        country = Country.from_pickled_country(
+            synthetic_country=synthetic_country,
+            country_configuration=country_configuration,
+            exchange_rates=exchange_rates,
+            country_name="FRA",
+            all_country_names=["FRA", "ROW"],
+            industries=datawrapper.industries,
+            initial_year=datawrapper.configuration.year,
+            t_max=12,
+            running_multiple_countries=False,
+            emission_factors_usd=emission_factors,
+        )
+
+        cg = country.central_government
+        assert "pit_schedule_by_year" in cg.states
+        rate_before = float(cg.states["Income Tax"])
+
+        cg.reset(cg_config)
+
+        assert "pit_schedule_by_year" in cg.states, (
+            "reset dropped the per-year schedule table, so the pre-hook would "
+            "silently hold the construction year's brackets for the whole run"
+        )
+        assert float(cg.states["Income Tax"]) == pytest.approx(rate_before), (
+            "reset reverted the pre-calibrated effective rate to the flat one"
+        )
+
     def test_pit_schedule_update_advances_brackets_end_to_end(self, datawrapper, tmp_path):
         """Integration of the whole indexing chain on a real ``Country``.
 

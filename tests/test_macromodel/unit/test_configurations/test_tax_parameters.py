@@ -109,14 +109,15 @@ class TestBuildCentralGovernmentConfiguration:
         )
 
         # Individuals 0,1 are a couple (household 0); individual 2 is a single
-        # parent (household 1).  Individual 1 has zero income, so individual 0
-        # receives the full Spousal Amount.
-        taxable = np.array([60000.0, 0.0, 40000.0])
+        # parent and individual 3 their minor child (household 1).  Individual 1
+        # has zero income, so individual 0 receives the full Spousal Amount; the
+        # child must be present for the eligible-dependant credit to apply.
+        taxable = np.array([60000.0, 0.0, 40000.0, 0.0])
         ctx = PitContext(
             employee_income=taxable,
             employee_si_rate=0.0,
-            individuals_age=np.array([40, 40, 40]),
-            individuals_corr_households=np.array([0, 0, 1]),
+            individuals_age=np.array([40, 40, 40, 10]),
+            individuals_corr_households=np.array([0, 0, 1, 1]),
             households_type=np.array(
                 [
                     HouseholdType.TWO_ADULTS_YOUNGER_THAN_65,
@@ -139,8 +140,10 @@ class TestBuildCentralGovernmentConfiguration:
         assert delta[0] == pytest.approx(spousal_amt)
         # Individual 1: spouse (individual 0) earns 60k > amount -> Spousal zero.
         assert delta[1] == pytest.approx(0.0)
-        # Individual 2: single parent -> Equivalent-To-Spouse amount.
+        # Individual 2: single parent of a minor -> Equivalent-To-Spouse amount.
         assert delta[2] == pytest.approx(equiv_amt)
+        # Individual 3: the dependant child claims nothing itself.
+        assert delta[3] == pytest.approx(0.0)
 
 
 
@@ -163,10 +166,11 @@ class TestBuildCentralGovernmentConfiguration:
 class TestDeferredCreditSafety:
     """Credits the runtime cannot express must be skipped by the builder, never
     applied universally.  Since the dormant kinds were unregistered from
-    ``_ELIGIBILITY_RULES``, every one of them reaches the builder as an *unmapped*
-    credit, so that single fallback is now the only thing standing between the
-    published schedule and a universal grant.  The parametrised case below pins
-    it against the real credit names the CSV still publishes — without it, the
+    ``_ELIGIBILITY_RULES``, every one of them now reaches the builder as an
+    *unmapped* credit rather than a recognised-but-deferred one.  The builder
+    still drops them first; the runtime fallback below is defence in depth, not
+    the sole guard.  The parametrised case pins it against the real credit names
+    the CSV still publishes — without it, the
     historical CSV would grant e.g. the Disability Amount to every individual at
     full value."""
 
