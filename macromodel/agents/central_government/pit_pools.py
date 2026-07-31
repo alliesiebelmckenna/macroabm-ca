@@ -16,7 +16,7 @@ income stream is a field on ``PitContext`` and a line in
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -58,6 +58,40 @@ class PitContext:
     individuals_age: np.ndarray | None = None
     individuals_corr_households: np.ndarray | None = None
     households_type: np.ndarray | None = None
+
+
+# Raw income streams the annualization scales; the grossed-up dividend is
+# annualized at its source so its credit scales with it exactly once.
+PIT_INCOME_STREAMS = frozenset({"employee_income", "rental_income", "financial_income"})
+
+
+def annualize_pit_context(
+    ctx: PitContext,
+    factor: float,
+    streams: frozenset[str] = PIT_INCOME_STREAMS,
+) -> PitContext:
+    """Scale per-step income to a yearly rate for assessment.
+
+    The brackets and credit amounts are annual, so income is scaled up before it
+    is assessed and ``compute_pit`` divides the resulting tax back down by the
+    same factor. Rates and demographic fields are untouched.
+
+    Args:
+        ctx: Per-individual income and context.
+        factor: Steps per year; 1 returns ``ctx`` unchanged.
+        streams: Income-stream fields to scale.
+
+    Returns:
+        A new context with the named streams scaled.
+    """
+    if factor == 1.0:
+        return ctx
+    scaled = {
+        name: getattr(ctx, name) * factor
+        for name in streams
+        if getattr(ctx, name) is not None
+    }
+    return replace(ctx, **scaled)
 
 
 def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:

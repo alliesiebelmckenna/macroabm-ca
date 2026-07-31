@@ -126,6 +126,14 @@ class CentralGovernmentConfiguration(BaseModel):
         "None means no credits applied.",
     )
 
+    pit_year_end_reconciliation: bool = Field(
+        default=True,
+        description="Settle each tax year against the year's actual income: refund "
+        "over-withholding at the first period of the new year and collect any "
+        "shortfall in the period after. Set False to withhold without reconciling, "
+        "which leaves a taxpayer whose income varied having paid the wrong amount.",
+    )
+
     couple_rental_income_split: float = Field(
         default=0.5,
         ge=0.0,

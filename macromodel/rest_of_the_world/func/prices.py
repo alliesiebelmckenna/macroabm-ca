@@ -23,6 +23,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 from macromodel.agents.firms.func.prices import PriceSetter
+from macromodel.sim_calendar import steps_per_year
 
 
 class RoWPriceSetter(ABC):
@@ -117,16 +118,17 @@ class SectorExogenousROWPriceSetter(InflationRoWPriceSetter):
     def _normalised_price(self, industry_name: str, current_quarter: int) -> float:
         """Interpolate the exogenous price for an industry and normalise to the initial year.
 
-        current_quarter is 1-based (quarter 1 = Q1 of initial_year).
-        Converts the quarterly index to a fractional calendar year, linearly interpolates
-        the CSV price series, and divides by the value at initial_year.
+        current_quarter is 1-based (step 1 = the first step of initial_year).
+        Converts the step index to a fractional calendar year using the configured
+        steps-per-year, linearly interpolates the CSV price series, and divides by
+        the value at initial_year.
         """
         initial_year = self.firm_exo_prices.initial_year
         series = self.firm_exo_prices.prices[industry_name]
         years = series.index.astype(float).values
         prices = series.values.astype(float)
         fn = interp1d(years, prices, bounds_error=False, fill_value="extrapolate")
-        yr = initial_year + (current_quarter - 1) / 4
+        yr = initial_year + (current_quarter - 1) / steps_per_year()
         return float(fn(yr)) / float(fn(initial_year))
 
     def compute_price(

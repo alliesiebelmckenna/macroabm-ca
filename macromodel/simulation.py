@@ -27,6 +27,7 @@ from macromodel.country.regional_aggregator import RegionalAggregator
 from macromodel.exchange_rates import ExchangeRates
 from macromodel.markets.goods_market import GoodsMarket
 from macromodel.rest_of_the_world import RestOfTheWorld
+from macromodel.sim_calendar import set_steps_per_year
 from macromodel.timestep import Timestep
 
 
@@ -130,6 +131,11 @@ class Simulation:
             country_names=countries_without_row,
             exchange_rates_model=model_dict,
         )
+
+        # Before the countries are built: the PIT pre-calibration runs during
+        # construction and reads this factor, so setting it later would assess the
+        # opening tax rate on the default step length instead of the configured one.
+        set_steps_per_year(datawrapper.time_unit)
 
         countries = {
             country_name: Country.from_pickled_country(
@@ -240,7 +246,9 @@ class Simulation:
         if configuration is None:
             configuration = self.configuration
 
-        self.timestep = Timestep(year=self.initial_year, month=1)
+        # Preserve the step length across a reset; omitting the increment here
+        # silently reverted the clock to one month per step.
+        self.timestep = Timestep(year=self.initial_year, month=1, increment=self.timestep.increment)
 
         self.rest_of_the_world.reset(configuration.row_configuration)
         self.goods_market.reset(configuration.goods_market_configuration)

@@ -26,6 +26,7 @@ from macromodel.agents.central_government.central_government_ts import (
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.configurations import CentralGovernmentConfiguration
+from macromodel.sim_calendar import steps_per_year
 from macromodel.timeseries import TimeSeries
 from macromodel.util.function_mapping import functions_from_model, update_functions
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
@@ -176,6 +177,7 @@ class CentralGovernment(Agent):
                 )
 
         states["couple_rental_income_split"] = configuration.couple_rental_income_split
+        states["pit_year_end_reconciliation"] = configuration.pit_year_end_reconciliation
 
         # Dividend integration params (flag defaults False for parity).
         states["pit_dividend_integration"] = configuration.pit_dividend_integration
@@ -316,6 +318,7 @@ class CentralGovernment(Agent):
         taxable_income_per_ind: np.ndarray | None = None,
         credit_base_per_ind: np.ndarray | None = None,
         direct_credits_per_ind: np.ndarray | None = None,
+        annual_credit_base=None,
     ) -> None:
         """Calculate all tax revenues for the current period.
 
@@ -378,6 +381,7 @@ class CentralGovernment(Agent):
         # Personal income tax: progressive when a schedule is configured, else flat.
         pit_uppers = self.states.get("pit_uppers")
         pit_rates = self.states.get("pit_rates")
+        settlement = 0.0  # only a filing on the progressive path makes this non-zero
 
         if pit_uppers is not None and pit_rates is not None:
             # The pools are assembled by the processing phase, which alone holds
@@ -391,9 +395,25 @@ class CentralGovernment(Agent):
                     "pit_pools.build_credit_base_pool at the call site."
                 )
 
+            # The pools arrive annualized; the same factor apportions the tax back.
+            factor = steps_per_year()
+            tax_per_ind: list = []
             total_income_tax = self.compute_pit(
-                taxable_income_per_ind, credit_base_per_ind, direct_credits_per_ind
+                taxable_income_per_ind,
+                credit_base_per_ind,
+                direct_credits_per_ind,
+                steps_per_year=factor,
+                out_tax_per_ind=tax_per_ind,
             )
+            settlement = self._reconcile_tax_year(
+                taxable_income_per_ind,
+                tax_per_ind[0],
+                credit_base_per_ind,
+                direct_credits_per_ind,
+                steps_per_year=factor,
+                annual_credit_base=annual_credit_base,
+            )
+            total_income_tax += settlement
         else:
             # Flat tax (backward-compatible path).
             total_income_tax = (
@@ -403,6 +423,11 @@ class CentralGovernment(Agent):
             )
 
         self.ts.taxes_income.append([total_income_tax])
+
+        # Recorded separately because it is netted into taxes_income above, where a
+        # settlement worth a fraction of a percent of the year's liability is not
+        # visible. Zero on the flat path and at every period that is not a filing.
+        self.ts.pit_year_end_settlement.append([settlement])
 
         # Rental tax: a reporting figure (feeds GDP rent_received), already
         # inside taxes_income; the effective Income Tax rate on rent paid.
@@ -421,6 +446,8 @@ class CentralGovernment(Agent):
         taxable_income_per_ind: np.ndarray,
         credit_base_per_ind: np.ndarray | None = None,
         direct_credits_per_ind: np.ndarray | None = None,
+        steps_per_year: float = 1.0,
+        out_tax_per_ind: list | None = None,
     ) -> float:
         """Apply fixed PIT policy (brackets, credits) to the assembled pools.
 
@@ -436,9 +463,13 @@ class CentralGovernment(Agent):
                 individual (``None`` or zeros when no credits apply).
             direct_credits_per_ind: Direct dollar credits per individual (the
                 dividend tax credit); ``None`` when not applicable.
+            steps_per_year: Steps in a year when the pools were annualized; the
+                assessed annual tax is divided by it to give the period's revenue.
+            out_tax_per_ind: Optional list receiving the per-individual period
+                tax, which the year-end reconciliation accumulates.
 
         Returns:
-            float: Total personal income tax revenue.
+            float: Personal income tax revenue for the period.
         """
         pit_uppers = self.states["pit_uppers"]
         pit_rates = self.states["pit_rates"]
@@ -455,22 +486,139 @@ class CentralGovernment(Agent):
             total_credit = total_credit + direct_credits_per_ind
         pit_per_individual = np.maximum(0.0, pit_per_individual - total_credit)
 
-        total_income_tax = float(pit_per_individual.sum())
+        # Assessed against annual policy, so this is the annual liability.
+        total_annual_tax = float(pit_per_individual.sum())
 
         total_taxable_base = float(taxable_income_per_ind.sum())
         # A non-finite total means something upstream is broken. Falling through
         # would leave states["Income Tax"] holding its previous value, since the
         # guard below is False for NaN, so a plausible rate would sit beside NaN
         # revenue that then accumulates into deficit and debt.
-        if not (np.isfinite(total_income_tax) and np.isfinite(total_taxable_base)):
+        if not (np.isfinite(total_annual_tax) and np.isfinite(total_taxable_base)):
             raise ValueError(
-                f"PIT produced a non-finite result (tax={total_income_tax}, "
+                f"PIT produced a non-finite result (tax={total_annual_tax}, "
                 f"base={total_taxable_base}); check the income pools for NaN."
             )
+        # Both terms are annual, so the rate is frequency-invariant: the period's
+        # share comes out of the revenue below, never the rate.
         if total_taxable_base > 0:
-            self.states["Income Tax"] = total_income_tax / total_taxable_base
+            self.states["Income Tax"] = total_annual_tax / total_taxable_base
 
-        return total_income_tax
+        # The period collects its share of the annual liability.
+        pit_per_individual = pit_per_individual / steps_per_year
+        if out_tax_per_ind is not None:
+            out_tax_per_ind.append(pit_per_individual)
+
+        return total_annual_tax / steps_per_year
+
+    def _reconcile_tax_year(
+        self,
+        annualized_income_per_ind: np.ndarray,
+        tax_per_ind: np.ndarray,
+        credit_base_per_ind: np.ndarray | None,
+        direct_credits_per_ind: np.ndarray | None,
+        steps_per_year: float = 1.0,
+        annual_credit_base=None,
+    ) -> float:
+        """Settle the previous tax year and carry this period into the next.
+
+        At the first period of a new year the liability on the year's actual
+        income is compared with what was withheld, and the difference settles
+        through the income-tax line at that filing: an over-payment is refunded
+        and an under-payment collected, both at the same moment, as a filing has
+        one outcome. Returns the amount to add to this period's revenue, negative
+        for a refund. Off unless ``states["pit_year_end_reconciliation"]`` is set.
+
+        Both halves are taken on the year's actual income: ``annual_credit_base``
+        re-values the credits there, since a credit that tapers with income does
+        not average back to its annual figure. Without it the accumulated average
+        stands in, and the settlement is approximate for those credits.
+        """
+        if not self.states.get("pit_year_end_reconciliation", False):
+            return 0.0
+
+        factor = steps_per_year
+        n_ind = len(annualized_income_per_ind)
+
+        settlement = 0.0
+
+        ytd_income = self.states.get("pit_ytd_income")
+        if ytd_income is None or len(ytd_income) != n_ind:
+            # First period, or the population changed size. The running totals are
+            # per individual and positionally aligned, so a resize leaves them
+            # meaningless and the year restarts. Note what that costs if it ever
+            # fires: the part-year withheld so far is dropped from the settlement
+            # and the filing calendar shifts to the new step 1. Demography is
+            # fixed today (NoAging), so only the first period reaches this.
+            ytd_income = np.zeros(n_ind)
+            ytd_tax = np.zeros(n_ind)
+            ytd_credit = np.zeros(n_ind)
+            ytd_direct_credit = np.zeros(n_ind)
+            self.states["pit_step"] = 0
+        else:
+            ytd_tax = self.states["pit_ytd_tax"]
+            ytd_credit = self.states["pit_ytd_credit"]
+            ytd_direct_credit = self.states["pit_ytd_direct_credit"]
+
+        step = int(self.states.get("pit_step", 0)) + 1
+        self.states["pit_step"] = step
+
+        # Step 1 is the first period of a calendar year. Settle before this
+        # period is added, since it belongs to the new year.
+        if step > factor and (step - 1) % factor == 0:
+            # Assess the settled year under the schedule in force FOR that year.
+            # The schedule pre-hook has already advanced the live states to the
+            # new year by the time this runs, so reading them here would tax the
+            # closing year at next year's rates.
+            uppers = self.states["pit_uppers"]
+            rates = self.states["pit_rates"]
+            year_credits = None
+            calendar_year = self.states.get("pit_calendar_year")
+            if calendar_year is not None:
+                settled = self._pit_schedule_for_year(int(calendar_year) - 1)
+                if settled is not None:
+                    uppers = settled["pit_uppers"]
+                    rates = settled["pit_rates"]
+                    year_credits = settled.get("pit_non_refundable_tax_credits")
+
+            annual_tax = compute_personal_income_tax(ytd_income, uppers, rates)
+            # Re-value the credits on the income the tax was assessed on.
+            annual_credit = ytd_credit
+            if annual_credit_base is not None:
+                annual_credit = ytd_direct_credit + annual_credit_base(
+                    ytd_income, year_credits
+                ) * float(rates[0])
+            liability = float(np.maximum(0.0, annual_tax - annual_credit).sum())
+            withheld = float(ytd_tax.sum())
+            # A filing has one outcome and one moment: the taxpayer either pays
+            # what is owed or receives a refund, both at the filing. A refund
+            # reduces the period's revenue, an amount owing adds to it.
+            settlement += liability - withheld
+            ytd_income = np.zeros(n_ind)
+            ytd_tax = np.zeros(n_ind)
+            ytd_credit = np.zeros(n_ind)
+            ytd_direct_credit = np.zeros(n_ind)
+
+        period_credit = np.zeros(n_ind)
+        if credit_base_per_ind is not None:
+            period_credit = period_credit + credit_base_per_ind * float(
+                self.states["pit_rates"][0]
+            )
+        period_direct = np.zeros(n_ind)
+        if direct_credits_per_ind is not None:
+            period_direct = period_direct + direct_credits_per_ind
+
+        # The pool was scaled for assessment, so the year's income is the sum of
+        # the unscaled periods. The credit mean is exact for a direct credit and a
+        # fallback for the rest, which the filing re-values when it can.
+        self.states["pit_ytd_income"] = ytd_income + annualized_income_per_ind / factor
+        self.states["pit_ytd_tax"] = ytd_tax + tax_per_ind
+        self.states["pit_ytd_credit"] = (
+            ytd_credit + (period_credit + period_direct) / factor
+        )
+        self.states["pit_ytd_direct_credit"] = ytd_direct_credit + period_direct / factor
+
+        return settlement
 
     def compute_taxes_on_products(self) -> float:
         """Calculate total taxes on products and production.
@@ -491,30 +639,34 @@ class CentralGovernment(Agent):
             + self.ts.current("taxes_exports")[0]
         )
 
-    def set_pit_for_year(self, year: int) -> None:
-        """Swap in the PIT schedule for *year* from ``states["pit_schedule_by_year"]``.
+    def _pit_schedule_for_year(self, year: int) -> dict | None:
+        """Return the published PIT schedule in force for *year*.
 
         A statutory lookup with no forward projection: a year before the first
-        uses the first year's schedule, a gap year holds at the most recent prior
-        year, and a year beyond the last raises. No-op when no schedule table is
-        present (flat and single-year governments stay frozen at construction).
+        published year uses the first, a gap year holds at the most recent prior
+        year, and a year beyond the last raises. Shared by the schedule pre-hook
+        and the year-end filing so the two cannot resolve a year differently.
 
         Args:
-            year: The simulation's current calendar year.
+            year: The calendar year to resolve.
+
+        Returns:
+            dict | None: The schedule fragment, or ``None`` when the government
+            carries no schedule table.
 
         Raises:
             ValueError: If ``year`` exceeds the last published year.
         """
         table = self.states.get("pit_schedule_by_year")
         if not table:
-            return
+            return None
 
         years = sorted(table)
         if year in table:
-            selected = year
-        elif year < years[0]:
-            selected = years[0]
-        elif year > years[-1]:
+            return table[year]
+        if year < years[0]:
+            return table[years[0]]
+        if year > years[-1]:
             raise ValueError(
                 f"Simulation year {year} exceeds the last available PIT "
                 f"schedule year {years[-1]}. The schedule is a statutory "
@@ -522,11 +674,29 @@ class CentralGovernment(Agent):
                 f"schedule CSVs to cover {year} before running a "
                 f"simulation this far."
             )
-        else:
-            # Gap year: hold at the most recent published year at or before it.
-            selected = max(y for y in years if y <= year)
+        # Gap year: hold at the most recent published year at or before it.
+        return table[max(y for y in years if y <= year)]
 
-        fragment = table[selected]
+    def set_pit_for_year(self, year: int) -> None:
+        """Swap in the PIT schedule for *year* from ``states["pit_schedule_by_year"]``.
+
+        Resolves the year through ``_pit_schedule_for_year``. No-op when no
+        schedule table is present (flat and single-year governments stay frozen
+        at construction).
+
+        Args:
+            year: The simulation's current calendar year.
+
+        Raises:
+            ValueError: If ``year`` exceeds the last published year.
+        """
+        fragment = self._pit_schedule_for_year(year)
+        if fragment is None:
+            return
+
+        # The year the live states now describe, so the year-end filing can find
+        # the schedule of the year it settles.
+        self.states["pit_calendar_year"] = year
         self.states["pit_uppers"] = fragment["pit_uppers"]
         self.states["pit_rates"] = fragment["pit_rates"]
         # Clear on absence so a field omitted this year drops any stale value.

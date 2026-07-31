@@ -49,6 +49,7 @@ from macromodel.agents.central_government.central_government import (
 )
 from macromodel.agents.central_government.pit_pools import (
     PitContext,
+    annualize_pit_context,
     build_credit_base_pool,
     build_dividend_tax_items,
     build_taxable_income_pool,
@@ -70,6 +71,7 @@ from macromodel.markets.credit_market.credit_market import CreditMarket
 from macromodel.markets.housing_market.housing_market import HousingMarket
 from macromodel.markets.labour_market.labour_market import LabourMarket
 from macromodel.rest_of_the_world import RestOfTheWorld
+from macromodel.sim_calendar import steps_per_year
 from macromodel.util.get_histogram import get_histogram
 
 
@@ -181,7 +183,9 @@ def _precalibrate_income_tax(
     NaN.
     """
     if np.isfinite(taxable_pool).all() and np.isfinite(credit_pool).all():
-        central_government.compute_pit(taxable_pool, credit_pool)
+        central_government.compute_pit(
+            taxable_pool, credit_pool, steps_per_year=steps_per_year()
+        )
     else:
         logging.warning(
             "%s: PIT pre-calibration skipped — the construction income pool "
@@ -498,6 +502,8 @@ class Country:
                 individuals_corr_households=ind_corr_hh,
                 households_type=households.states.get("Type"),
             )
+            # Same annual basis as the runtime path.
+            pit_ctx = annualize_pit_context(pit_ctx, steps_per_year())
             taxable_pool = build_taxable_income_pool(pit_ctx)
             credit_pool = build_credit_base_pool(
                 central_government.states.get("pit_non_refundable_tax_credits"),
@@ -1583,10 +1589,11 @@ class Country:
                 eligible_dtc_rate=float(self.central_government.states["dividend_eligible_dtc_rate"]),
                 non_eligible_dtc_rate=float(self.central_government.states["dividend_non_eligible_dtc_rate"]),
             )
+            # Annualized once here, so the gross-up and its credit are both annual.
             gross_firm_dividend = self.individuals.compute_gross_firm_dividend(
                 firm_profits=self.firms.ts.current("profits"),
                 tau_firm=tau_firm,
-            )
+            ) * steps_per_year()
             grossed_up_firm, dtc_firm = build_dividend_tax_items(
                 dividend_income=gross_firm_dividend,
                 small_business_share=float(self.central_government.states["dividend_small_business_share"]),
@@ -1595,7 +1602,7 @@ class Country:
             gross_bank_dividend = self.individuals.compute_gross_bank_dividend(
                 bank_profits=self.banks.ts.current("profits"),
                 tau_firm=tau_firm,
-            )
+            ) * steps_per_year()
             grossed_up_bank, dtc_bank = build_dividend_tax_items(
                 dividend_income=gross_bank_dividend,
                 small_business_share=float(self.central_government.states["bank_dividend_small_business_share"]),
@@ -1616,12 +1623,28 @@ class Country:
             individuals_corr_households=ind_corr_hh,
             households_type=self.households.states.get("Type"),
         )
+        # The grossed-up dividend is already annual; scale the raw streams.
+        pit_ctx = annualize_pit_context(pit_ctx, steps_per_year())
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
-        credit_base_per_ind = build_credit_base_pool(
-            self.central_government.states.get("pit_non_refundable_tax_credits"),
-            taxable_income_per_ind,
-            pit_ctx,
+        credit_defs = self.central_government.states.get(
+            "pit_non_refundable_tax_credits"
         )
+        credit_base_per_ind = build_credit_base_pool(
+            credit_defs, taxable_income_per_ind, pit_ctx
+        )
+
+        def annual_credit_base(annual_income_per_ind, year_credit_defs=None):
+            """Value the credits at a year's income, for the year-end filing.
+
+            ``year_credit_defs`` carries the settled year's credit definitions;
+            without it the current year's stand in, which is only correct when
+            the schedule did not change.
+            """
+            return build_credit_base_pool(
+                credit_defs if year_credit_defs is None else year_credit_defs,
+                annual_income_per_ind,
+                pit_ctx,
+            )
 
         self.central_government.compute_taxes(
             current_ind_employee_income=self.individuals.ts.current("employee_income"),
@@ -1642,6 +1665,7 @@ class Country:
             taxable_income_per_ind=taxable_income_per_ind,
             credit_base_per_ind=credit_base_per_ind,
             direct_credits_per_ind=dividend_tax_credit_per_ind,
+            annual_credit_base=annual_credit_base,
         )
 
         # General government fields

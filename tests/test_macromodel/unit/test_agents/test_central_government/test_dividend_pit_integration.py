@@ -18,6 +18,7 @@ from macromodel.agents.central_government.pit_pools import (
     build_taxable_income_pool,
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus
+from macromodel.sim_calendar import steps_per_year
 
 # 2014 BC rates used across all tests.
 _ELIG_GU = 0.38
@@ -151,4 +152,7 @@ class TestBankDividendCountryWiring:
             direct_credits_per_ind=dtc,
         )
         actual_revenue = cg.ts.get_aggregate("taxes_income")[-1]
+        # The pools are assessed against the annual schedule, so the period is
+        # booked its share of the annual liability.
+        expected_revenue /= steps_per_year()
         assert actual_revenue == pytest.approx(expected_revenue, rel=1e-9)

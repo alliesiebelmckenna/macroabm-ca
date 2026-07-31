@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 from scipy.special import expit
 
+from macromodel.sim_calendar import steps_per_year
+
 
 class HouseholdDemandForProperty(ABC):
     """Abstract base class for household property demand behavior.
@@ -286,10 +288,11 @@ class DefaultHouseholdDemandForProperty(HouseholdDemandForProperty):
         max_corresponding_rent = (
             observed_fraction_rent_value[0] * max_value_affordable + observed_fraction_rent_value[1]
         )
-        annual_cost_of_renting = 4 * (1 + self.psychological_pressure_of_renting) * max_corresponding_rent
+        steps = steps_per_year()
+        annual_cost_of_renting = steps * (1 + self.psychological_pressure_of_renting) * max_corresponding_rent
         annual_cost_of_purchasing = (
-            4 * np.maximum(0, max_amount_pay - household_financial_wealth[ind_dec]) / assumed_mortgage_maturity
-            - ((1 + expected_hpi_growth) ** 4 - 1) * max_value_affordable
+            steps * np.maximum(0, max_amount_pay - household_financial_wealth[ind_dec]) / assumed_mortgage_maturity
+            - ((1 + expected_hpi_growth) ** steps - 1) * max_value_affordable
         )
         # Logistic probability of buying, normalized by 10000.
         # scipy.special.expit is a numerically stable sigmoid that saturates

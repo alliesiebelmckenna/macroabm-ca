@@ -55,6 +55,9 @@ def create_central_government_timeseries(
         taxes_corporate_income=[data["Corporate Taxes"].values[0]],
         taxes_exports=[data["Export Taxes"].values[0]],
         taxes_income=[data["Income Taxes"].values[0]],
+        # The year-end settlement, already inside taxes_income and zero except at a
+        # filing. Negative is a refund paid out, positive a collection received.
+        pit_year_end_settlement=[0.0],
         taxes_rental_income=[data["Rental Income Taxes"].values[0]],
         taxes_employee_si=[data["Employee SI Tax"].values[0]],
         taxes_employer_si=[data["Employer SI Tax"].values[0]],
