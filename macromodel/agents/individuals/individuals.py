@@ -364,9 +364,7 @@ class Individuals(Agent):
         firm_inv = activity == ActivityStatus.FIRM_INVESTOR
         corr = self.states["Corresponding Invested Firm"][firm_inv].astype(int)
         dividend[firm_inv] = (
-            self.states["Dividend Payout Ratio"]
-            * (1.0 - tau_firm)
-            * np.maximum(0.0, firm_profits[corr])
+            self.states["Dividend Payout Ratio"] * (1.0 - tau_firm) * np.maximum(0.0, firm_profits[corr])
         )
         return dividend
 
@@ -396,9 +394,7 @@ class Individuals(Agent):
         bank_inv = activity == ActivityStatus.BANK_INVESTOR
         corr = self.states["Corresponding Invested Bank"][bank_inv].astype(int)
         dividend[bank_inv] = (
-            self.states["Dividend Payout Ratio"]
-            * (1.0 - tau_firm)
-            * np.maximum(0.0, bank_profits[corr])
+            self.states["Dividend Payout Ratio"] * (1.0 - tau_firm) * np.maximum(0.0, bank_profits[corr])
         )
         return dividend
 

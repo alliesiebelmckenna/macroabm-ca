@@ -24,9 +24,7 @@ from macromodel.agents.households.households import Households
 
 def _stub(n_households: int, gross_rental: np.ndarray | None = None):
     stub = types.SimpleNamespace()
-    stub.ts = types.SimpleNamespace(
-        current=lambda key: {"n_households": n_households}[key]
-    )
+    stub.ts = types.SimpleNamespace(current=lambda key: {"n_households": n_households}[key])
     stub._adult_members = Households._adult_members
     if gross_rental is not None:
         stub.compute_gross_rental_income = lambda housing_data: gross_rental
@@ -49,7 +47,6 @@ class TestDistributeFinancialIncome:
         npt.assert_allclose(out, [500.0, 500.0, 0.0, 0.0])
         assert out.sum() == 1000.0
 
-
     def test_no_adult_household_falls_back_conserved(self):
         ages = np.array([16.0, 12.0])
         corr = np.array([0, 0])
@@ -61,7 +58,6 @@ class TestDistributeFinancialIncome:
             individuals_age=ages,
         )
         npt.assert_allclose(out, [150.0, 150.0])
-
 
 
 class TestDistributeRentalIncome:
@@ -98,5 +94,3 @@ class TestDistributeRentalIncome:
             individuals_age=ages,
         )
         npt.assert_allclose(out, [0.0, 1000.0])
-
-

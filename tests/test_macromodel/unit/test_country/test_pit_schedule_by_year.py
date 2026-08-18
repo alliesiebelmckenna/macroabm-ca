@@ -13,7 +13,6 @@ behaviour).
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from macro_data.readers.taxation import TaxationReader
@@ -42,12 +41,10 @@ def _multi_year_reader(tmp_path):
 
 
 class TestBuildPitScheduleByYear:
-
     def test_not_opted_in_returns_none(self, multi_year_reader):
         # Reader present, but the government has not opted into progressive PIT.
         config = CentralGovernmentConfiguration(activate_progressive_pit=False)
         assert _build_pit_schedule_by_year(config, multi_year_reader, scale=1) is None
-
 
     def test_carries_per_year_marginal_rate(self, multi_year_reader):
         """Each published year's entry holds that year's *actual* bottom rate,
@@ -60,9 +57,7 @@ class TestBuildPitScheduleByYear:
 
 # Committed schedules.
 #   parents[0]=test_country [1]=unit [2]=test_macromodel [3]=tests [4]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 # Config fields the fragment stores under different key names.
 _FRAGMENT_KEYS_FOR = {"pit_brackets": {"pit_uppers", "pit_rates"}}
@@ -99,22 +94,16 @@ class TestFragmentCoversEveryYearVaryingParameter:
         varying = {
             name
             for name in type(early).model_fields
-            if name not in _NOT_SCHEDULE_DRIVEN
-            and _differs(getattr(early, name), getattr(late, name))
+            if name not in _NOT_SCHEDULE_DRIVEN and _differs(getattr(early, name), getattr(late, name))
         }
         assert varying, "the published schedule does not vary between 2014 and 2019"
 
         table = _build_pit_schedule_by_year(config, reader, scale=1)
         fragment_keys = set(table[2014])
 
-        omitted = sorted(
-            name
-            for name in varying
-            if not (_FRAGMENT_KEYS_FOR.get(name, {name}) & fragment_keys)
-        )
+        omitted = sorted(name for name in varying if not (_FRAGMENT_KEYS_FOR.get(name, {name}) & fragment_keys))
         assert not omitted, (
             "these parameters vary by published year but are absent from the "
             "per-year fragment, so they freeze at the construction year: "
             f"{omitted}"
         )
-

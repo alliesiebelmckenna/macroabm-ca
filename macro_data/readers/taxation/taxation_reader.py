@@ -19,13 +19,16 @@ from macro_data.readers.taxation.personal_income_tax.dividend_tax_credit_schedul
     DividendTaxCreditSchedule,
 )
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
-
+from macro_data.readers.taxation.personal_income_tax.rtc_schedule import (
+    RefundableSchedule,
+)
 
 # Default schedule filenames; jurisdictions live in the jurisdiction column. They are
 # defaults, not requirements: point SchedulePaths at any files with this schema.
 RATES_THRESHOLDS_FILENAME = "rates_thresholds.csv"
 TAX_CREDITS_FILENAME = "non_refundable_tax_credits.csv"
 DIVIDEND_FILENAME = "dividend_tax_credit_schedule.csv"
+REFUNDABLE_FILENAME = "refundable_tax_credits.csv"
 
 
 @dataclass(frozen=True)
@@ -43,11 +46,15 @@ class SchedulePaths:
         credits: Non-refundable credit schedule, or ``None`` to apply no credits.
         dividend: Dividend gross-up / DTC schedule, or ``None`` for no dividend
             path.
+        refundable: Refundable credit schedule, or ``None`` for no refundable
+            path. Absent is a normal state, not an error: the jurisdiction
+            simply grants no refundable credit.
     """
 
     rates: Path
     credits: Optional[Path] = None
     dividend: Optional[Path] = None
+    refundable: Optional[Path] = None
 
     @classmethod
     def in_dir(
@@ -57,6 +64,7 @@ class SchedulePaths:
         rates: str = RATES_THRESHOLDS_FILENAME,
         credits: str = TAX_CREDITS_FILENAME,
         dividend: str = DIVIDEND_FILENAME,
+        refundable: str = REFUNDABLE_FILENAME,
     ) -> "SchedulePaths":
         """Resolve the schedule files inside *schedule_dir* by filename.
 
@@ -68,10 +76,12 @@ class SchedulePaths:
         schedule_dir = Path(schedule_dir)
         credits_path = schedule_dir / credits
         dividend_path = schedule_dir / dividend
+        refundable_path = schedule_dir / refundable
         return cls(
             rates=schedule_dir / rates,
             credits=credits_path if credits_path.exists() else None,
             dividend=dividend_path if dividend_path.exists() else None,
+            refundable=refundable_path if refundable_path.exists() else None,
         )
 
 
@@ -85,6 +95,8 @@ class TaxationReader:
             ``pit_schedule.non_refundable_tax_credits``.
         dividend_schedule: Dividend gross-up / DTC rate schedule, or ``None``
             when no dividend schedule is present.
+        refundable_schedule: Refundable credit schedule, or ``None`` when the
+            jurisdiction has no refundable rows.
         jurisdiction: The taxing-authority key these schedules belong to (e.g.
             ``"bc"``), so a consumer can attach them to the matching government
             agent when the model gains multiple governments.
@@ -93,6 +105,9 @@ class TaxationReader:
     pit_schedule: PITSchedule
     dividend_schedule: Optional[DividendTaxCreditSchedule]
     jurisdiction: str
+    # Additive and defaulted, so an existing construction keeps working and a
+    # jurisdiction without refundable rows needs no change at its call site.
+    refundable_schedule: Optional[RefundableSchedule] = None
 
     @classmethod
     def from_paths(
@@ -119,9 +134,7 @@ class TaxationReader:
         dividend_schedule: Optional[DividendTaxCreditSchedule] = None
         if paths.dividend is not None:
             try:
-                dividend_schedule = DividendTaxCreditSchedule.from_csv(
-                    paths.dividend, jurisdiction=jurisdiction
-                )
+                dividend_schedule = DividendTaxCreditSchedule.from_csv(paths.dividend, jurisdiction=jurisdiction)
             except ValueError:
                 # The file carries no rows for this jurisdiction: it taxes
                 # dividends at the ordinary rates, with no gross-up / DTC path.
@@ -129,9 +142,20 @@ class TaxationReader:
                 # yet sourced, not an error.
                 dividend_schedule = None
 
+        refundable_schedule: Optional[RefundableSchedule] = None
+        if paths.refundable is not None:
+            try:
+                refundable_schedule = RefundableSchedule.from_csv(paths.refundable, jurisdiction=jurisdiction)
+            except ValueError:
+                # No rows for this jurisdiction: it grants no refundable credit.
+                # Normal for a jurisdiction whose refundable credits are not
+                # sourced, and the same posture the dividend schedule takes.
+                refundable_schedule = None
+
         return cls(
             pit_schedule=pit_schedule,
             dividend_schedule=dividend_schedule,
+            refundable_schedule=refundable_schedule,
             jurisdiction=jurisdiction,
         )
 
@@ -143,6 +167,4 @@ class TaxationReader:
         jurisdiction: str,
     ) -> "TaxationReader":
         """Load *jurisdiction*'s schedules from the canonical files in *schedule_dir*."""
-        return cls.from_paths(
-            SchedulePaths.in_dir(schedule_dir), jurisdiction=jurisdiction
-        )
+        return cls.from_paths(SchedulePaths.in_dir(schedule_dir), jurisdiction=jurisdiction)

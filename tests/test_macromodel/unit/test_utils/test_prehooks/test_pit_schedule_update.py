@@ -8,7 +8,6 @@ dispatch logic is exercised without constructing a full ``Simulation``.
 """
 
 from macromodel.utils.prehooks import create_pit_schedule_update_hook
-from macromodel.utils.prehooks.pit_schedule_update import create_pit_schedule_update_hook as direct
 
 
 class _StubGovernment:
@@ -30,12 +29,6 @@ class _StubCountry:
 class _StubSimulation:
     def __init__(self, countries):
         self.countries = countries
-
-
-
-
-
-
 
 
 def test_only_tabled_governments_are_advanced():

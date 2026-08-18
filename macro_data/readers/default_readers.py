@@ -19,7 +19,8 @@ Key features:
 
 import re
 import warnings
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple
@@ -43,7 +44,6 @@ from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
 from macro_data.readers.emissions.emissions_reader import CH4EmissionsReaderCAN, EmissionsReader
 from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPricesReader
-from macro_data.readers.taxation import TaxationDataWarning, TaxationStore
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
     get_investment_fractions,
@@ -60,6 +60,7 @@ from macro_data.readers.population_data.compustat_firms_reader import (
 )
 from macro_data.readers.population_data.hfcs_reader import HFCSReader
 from macro_data.readers.socioeconomic_data.wiod_sea_data import WIODSEAReader
+from macro_data.readers.taxation import TaxationDataWarning, TaxationStore
 from macro_data.readers.util.prune_util import DataFilterWarning
 
 
@@ -517,9 +518,7 @@ class DataReaders:
         if datapaths.ch4_emissions_path is not None and datapaths.ch4_emissions_path.exists():
             ch4_emissions = CH4EmissionsReaderCAN.read_data(datapaths.ch4_emissions_path)
 
-        taxation = _load_taxation_reader(
-            datapaths.taxation_path, datapaths.taxation_filenames
-        )
+        taxation = _load_taxation_reader(datapaths.taxation_path, datapaths.taxation_filenames)
 
         return cls(
             icio=icio,

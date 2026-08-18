@@ -58,6 +58,20 @@ def create_central_government_timeseries(
         # The year-end settlement, already inside taxes_income and zero except at a
         # filing. Negative is a refund paid out, positive a collection received.
         pit_year_end_settlement=[0.0],
+        # Refundable credits, kept OUT of taxes_income: a refundable credit is
+        # government EXPENDITURE at its full amount, not revenue foregone, so
+        # netting it against revenue would understate both sides. Two series
+        # because the two delivery paths refer to different years and must stay
+        # separable -- one pays with the settlement, the other over the four
+        # periods that follow it.
+        pit_rtc_settlement=[0.0],
+        pit_rtc_instalments=[0.0],
+        # Revenue foregone to the non-refundable credits, for the tax year the
+        # filing settles: zero except at a filing, because that is where the
+        # year's credits are valued on the income actually earned. The mirror of
+        # the refundable series above -- a credit that reduces a bill is revenue
+        # never collected, so it is reported rather than booked as spending.
+        pit_non_refundable_credits_granted=[0.0],
         taxes_rental_income=[data["Rental Income Taxes"].values[0]],
         taxes_employee_si=[data["Employee SI Tax"].values[0]],
         taxes_employer_si=[data["Employer SI Tax"].values[0]],

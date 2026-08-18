@@ -22,10 +22,7 @@ from macromodel.country import Country
 from macromodel.exchange_rates import ExchangeRates
 from macromodel.sim_calendar import steps_per_year
 
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 def _build_country(datawrapper, **cg_kwargs):
@@ -35,9 +32,7 @@ def _build_country(datawrapper, **cg_kwargs):
         base, taxation=TaxationReader.from_dir(_COMMITTED_PIT_DIR, jurisdiction="bc")
     )
     country_configuration = CountryConfiguration(
-        central_government=CentralGovernmentConfiguration(
-            activate_progressive_pit=True, **cg_kwargs
-        ),
+        central_government=CentralGovernmentConfiguration(activate_progressive_pit=True, **cg_kwargs),
     )
     exchange_rates = ExchangeRates.from_data(
         exchange_rates_data=datawrapper.exchange_rates,
@@ -83,9 +78,7 @@ def _charge(cg, taxable, credit_base=None, direct_credits=None):
         current_household_new_real_wealth=np.zeros(n),
         taxes_less_subsidies_rates=np.zeros(1),
         taxable_income_per_ind=taxable,
-        nrtc_base_per_ind=(
-            np.zeros_like(taxable) if credit_base is None else credit_base
-        ),
+        nrtc_base_per_ind=(np.zeros_like(taxable) if credit_base is None else credit_base),
         nrtc_direct_per_ind=direct_credits,
     )
     return cg.ts.get_aggregate("taxes_income")[-1]
@@ -122,9 +115,7 @@ class TestSettlementIsRecorded:
     be visible at all."""
 
     def test_a_refund_is_recorded_and_other_periods_are_zero(self, datawrapper):
-        cg = _build_country(
-            datawrapper, pit_year_end_reconciliation=True
-        ).central_government
+        cg = _build_country(datawrapper, pit_year_end_reconciliation=True).central_government
         f = int(steps_per_year())
         earning = np.full(2, float(cg.states["pit_uppers"][0])) * steps_per_year()
         idle = np.zeros(2)
@@ -148,9 +139,7 @@ class TestFilingUsesTheSettledYearsSchedule:
     to be looked up rather than read from the live states."""
 
     def test_a_closed_year_is_settled_at_its_own_rates(self, datawrapper):
-        cg = _build_country(
-            datawrapper, pit_year_end_reconciliation=True
-        ).central_government
+        cg = _build_country(datawrapper, pit_year_end_reconciliation=True).central_government
         table = cg.states.get("pit_schedule_by_year")
         assert table, "the real government must carry a per-year schedule table"
 
@@ -183,3 +172,93 @@ class TestFilingUsesTheSettledYearsSchedule:
         # taken at the filing, so it would appear here.
         _charge(cg, np.zeros(2))
         assert float(cg.ts.current("pit_year_end_settlement")[0]) == pytest.approx(0.0)
+
+
+class TestRefundableCreditReachesHouseholds:
+    """The wiring, not the arithmetic: does the credit actually get PAID?
+
+    The aggregation helper is unit-tested elsewhere. This covers the step the
+    unit tests cannot: that the aggregated credit is added to the household
+    transfer series at all. Removing it there leaves every unit test green while
+    the credit is computed correctly and reaches nobody -- the least visible
+    failure in this feature.
+    """
+
+    def test_the_model_actually_passes_a_refundable_callable(self):
+        """The filing must RECEIVE `annual_rtc`, or nothing is ever computed.
+
+        Found live: the callable was defined nowhere and the filing was called
+        without it, so the whole refundable mechanism was unreachable from a
+        running model while every unit test passed. This asserts the wire
+        exists, which is the cheapest thing that would have caught it.
+        """
+        import inspect
+
+        src = (
+            inspect.getsource(Country.update_realised_metrics) + inspect.getsource(Country.compute_taxes_and_deficit)
+            if hasattr(Country, "compute_taxes_and_deficit")
+            else inspect.getsource(Country)
+        )
+        assert "annual_rtc=annual_rtc" in src, (
+            "compute_taxes is called without annual_rtc, so the refundable credit is never valued"
+        )
+
+    def test_the_context_carries_tenure(self):
+        """Without it the renter's credit grants nothing, silently.
+
+        Also found live: `PitContext` gained a tenure field and the model never
+        populated it, so the credit was reachable but always zero.
+        """
+        import inspect
+
+        src = inspect.getsource(Country)
+        assert "households_tenure=" in src, (
+            "the PIT context is built without tenure, so the renter's credit has no signal and grants nothing"
+        )
+
+    def test_the_refundable_credits_reach_agent_states_scaled(self, datawrapper):
+        """The whole chain on a real object: config -> scaled -> agent state.
+
+        Four wires in this feature were missing, and each broke it the same
+        silent way: the credit computed correctly and paid nobody. Two were
+        exactly this -- the list never reached agent states, so the filing
+        callable read None. Asserting the SCALED value covers both the seeding
+        and the units in one assertion.
+        """
+        country = _build_country(datawrapper)
+        rows = country.central_government.states.get("pit_refundable_tax_credits")
+
+        assert rows, (
+            "the refundable credits never reach agent states, so the filing "
+            "callable reads None and the credit is never valued"
+        )
+        individual = next(r for r in rows if r["credit"] == "Eligible Individual Amount")
+        # Per-person dollars are a few hundred; agent dollars are that times the
+        # scale, so anything unscaled fails here.
+        assert individual["amount"] > 1000.0, (
+            f"amount {individual['amount']} looks like per-person dollars -- the "
+            f"scaling seam did not reach the refundable list"
+        )
+        # Dimensionless, so it must NOT have moved.
+        assert individual["clawback_rate"] == pytest.approx(0.02)
+
+    def test_the_year_advance_swaps_the_refundable_credits(self, datawrapper):
+        """A year-varying parameter must move with the year, not freeze.
+
+        The amounts change every published year. Omitted from the swap they hold
+        the construction year's values for the whole run -- 2014 amounts paid in
+        2030, with nothing indicating it.
+        """
+        cg = _build_country(datawrapper).central_government
+        if cg.states.get("pit_schedule_by_year") is None:
+            pytest.skip("no per-year schedule table on this build")
+
+        seen = {}
+        for year in (2017, 2023):
+            cg.set_pit_for_year(year)
+            rows = cg.states.get("pit_refundable_tax_credits")
+            assert rows, f"the refundable credits vanished at {year}"
+            seen[year] = next(r["amount"] for r in rows if r["credit"] == "Eligible Individual Amount")
+        assert seen[2017] != seen[2023], (
+            f"the amount did not move between years ({seen}), so it is frozen at whichever year the model was built for"
+        )

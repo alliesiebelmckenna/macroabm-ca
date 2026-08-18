@@ -21,11 +21,11 @@ import pandas as pd
 
 # Required CSV columns in the consolidated dividend_tax_credit_schedule.csv.
 _DTC_REQUIRED_COLS = {
-    "year",              # taxation year the row applies to
-    "jurisdiction",          # jurisdiction key (e.g. "BC", "CA")
-    "dividend_type",         # "eligible" / "non_eligible"
-    "gross_up_rate",         # taxable = (1 + rate) x cash (federal, uniform)
-    "dtc_pct_of_grossed_up", # DTC as a fraction of grossed-up
+    "year",  # taxation year the row applies to
+    "jurisdiction",  # jurisdiction key (e.g. "BC", "CA")
+    "dividend_type",  # "eligible" / "non_eligible"
+    "gross_up_rate",  # taxable = (1 + rate) x cash (federal, uniform)
+    "dtc_pct_of_grossed_up",  # DTC as a fraction of grossed-up
 }
 
 _DIVIDEND_TYPES = ("eligible", "non_eligible")
@@ -83,25 +83,20 @@ class DividendTaxCreditSchedule:
         missing = _DTC_REQUIRED_COLS - set(df.columns)
         if missing:
             raise ValueError(
-                f"Dividend-rate CSV is missing required columns: {sorted(missing)}. "
-                f"Found: {sorted(df.columns)}"
+                f"Dividend-rate CSV is missing required columns: {sorted(missing)}. Found: {sorted(df.columns)}"
             )
 
         juris = jurisdiction.upper()
         df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
-            raise ValueError(
-                f"Dividend-rate CSV {path} does not contain any rows for jurisdiction {juris}"
-            )
+            raise ValueError(f"Dividend-rate CSV {path} does not contain any rows for jurisdiction {juris}")
 
         df["dividend_type"] = df["dividend_type"].astype(str).str.strip().str.lower()
         df["year"] = df["year"].astype(int)
         for col in ("gross_up_rate", "dtc_pct_of_grossed_up"):
             df[col] = df[col].astype(float)
         if "dtc_pct_of_actual" in df.columns:
-            df["dtc_pct_of_actual"] = pd.to_numeric(
-                df["dtc_pct_of_actual"], errors="coerce"
-            )
+            df["dtc_pct_of_actual"] = pd.to_numeric(df["dtc_pct_of_actual"], errors="coerce")
 
         return cls(df)
 
@@ -130,8 +125,7 @@ class DividendTaxCreditSchedule:
         path = directory / filename
         if not path.exists():
             raise FileNotFoundError(
-                f"Dividend-rate file not found: {path}\n"
-                f"Available: {sorted(p.name for p in directory.glob('*.csv'))}"
+                f"Dividend-rate file not found: {path}\nAvailable: {sorted(p.name for p in directory.glob('*.csv'))}"
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 
@@ -156,8 +150,7 @@ class DividendTaxCreditSchedule:
         sub = self._df[self._df["dividend_type"] == dtype]
         if sub.empty:
             raise ValueError(
-                f"No rows for dividend_type '{dtype}'. "
-                f"Available: {sorted(self._df['dividend_type'].unique())}"
+                f"No rows for dividend_type '{dtype}'. Available: {sorted(self._df['dividend_type'].unique())}"
             )
 
         matches = sub[sub["year"] == year]
@@ -180,9 +173,7 @@ class DividendTaxCreditSchedule:
             dividend_type=dtype,
             gross_up_rate=float(row["gross_up_rate"]),
             dtc_pct_of_grossed_up=float(row["dtc_pct_of_grossed_up"]),
-            dtc_pct_of_actual=(
-                None if actual is None or pd.isna(actual) else float(actual)
-            ),
+            dtc_pct_of_actual=(None if actual is None or pd.isna(actual) else float(actual)),
         )
 
     def get_year_rates(self, year: int) -> dict[str, DividendRates]:
@@ -198,6 +189,4 @@ class DividendTaxCreditSchedule:
         Raises:
             ValueError: If any dividend type has no applicable row.
         """
-        return {
-            dtype: self.get_rates(year, dtype) for dtype in _DIVIDEND_TYPES
-        }
+        return {dtype: self.get_rates(year, dtype) for dtype in _DIVIDEND_TYPES}

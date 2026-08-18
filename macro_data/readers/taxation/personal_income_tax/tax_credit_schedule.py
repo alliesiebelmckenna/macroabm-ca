@@ -21,15 +21,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
-
 # Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
     "tax_year",  # taxation year the row applies to
-    "geo",       # jurisdiction key (e.g. "BC")
-    "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
-    "index",     # whether the amount is statutorily indexed
+    "geo",  # jurisdiction key (e.g. "BC")
+    "credit",  # credit name, e.g. "Personal Amount", "Age Amount"
+    "index",  # whether the amount is statutorily indexed
 }
 
 
@@ -37,21 +34,33 @@ _TC_REQUIRED_COLS = {
 # eligible when all rules in the dict are satisfied. Expand as credits activate.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
     # Active: eligibility the runtime credit pool can express today.
-    "Personal Amount":          {},                                     # universal
-    "Age Amount":               {"age_min": 65},
-    "Spousal Amount":           {"in_couple_household": True},          # married / common-law
-    "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
+    "Personal Amount": {},  # universal
+    "Age Amount": {"age_min": 65},
+    "Spousal Amount": {"in_couple_household": True},  # married / common-law
+    "Equivalent To Spouse Amount": {"is_single_parent": True},  # single parent / caregiver
     # Deferred: known BC credits whose eligibility signal the model does not yet
     # carry, so the builder skips them. Trailing notes flag nuances to resolve
     # before activating one.
-    "Pension Income Amount":    {"has_eligible_pension_income": True},  # lesser of $1000 or actual eligible pension income; NOT age-based (CPP may start 60-70, also covers non-CPP pension)
-    "B.C. Caregiver Amount":        {"is_caregiver": True},            # caring for a dependant with impairment; clawed back on the dependant's income
-    "Disability Amount":            {"has_disability": True},          # DTC-eligible individual
-    "Disability Amount (Child)":    {"has_disability_dependant": True},# supplement for a dependant under 18 with a disability
-    "Adoption Amount":              {"has_adoption_expense": True},    # event-based: amount column is the MAX eligible expense, not a flat base
+    "Pension Income Amount": {
+        "has_eligible_pension_income": True
+    },  # lesser of $1000 or actual eligible pension income; NOT age-based (CPP may start 60-70, also covers non-CPP pension)
+    "B.C. Caregiver Amount": {
+        "is_caregiver": True
+    },  # caring for a dependant with impairment; clawed back on the dependant's income
+    "Disability Amount": {"has_disability": True},  # DTC-eligible individual
+    "Disability Amount (Child)": {
+        "has_disability_dependant": True
+    },  # supplement for a dependant under 18 with a disability
+    "Adoption Amount": {
+        "has_adoption_expense": True
+    },  # event-based: amount column is the MAX eligible expense, not a flat base
     "Volunteer Firefighter Amount": {"is_volunteer_first_responder": True},  # 200+ volunteer hours
-    "Medical Expense Amount":       {"has_medical_expense": True},     # formula: expenses minus lesser(3% net income, cap); amount column blank
-    "BC Tax Reduction Credit":      {"is_income_tested_reduction": True},  # direct $ reduction, NOT base x rate; reduced by 3.56% of net income over threshold
+    "Medical Expense Amount": {
+        "has_medical_expense": True
+    },  # formula: expenses minus lesser(3% net income, cap); amount column blank
+    "BC Tax Reduction Credit": {
+        "is_income_tested_reduction": True
+    },  # direct $ reduction, NOT base x rate; reduced by 3.56% of net income over threshold
 }
 
 
@@ -134,9 +143,7 @@ class TaxCreditSchedule:
         geo = jurisdiction.upper()
         df = df[df["geo"].astype(str).str.upper() == geo].copy()
         if df.empty:
-            raise ValueError(
-                f"Tax-credit CSV {path} does not contain any rows for geo {geo}"
-            )
+            raise ValueError(f"Tax-credit CSV {path} does not contain any rows for geo {geo}")
 
         # Minimum year, not the first row's, so an unsorted CSV does not shift
         # the base credit set.
@@ -217,8 +224,7 @@ class TaxCreditSchedule:
         path = schedule_dir / filename
         if not path.exists():
             raise FileNotFoundError(
-                f"Tax-credit file not found: {path}\n"
-                f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
+                f"Tax-credit file not found: {path}\nAvailable: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 

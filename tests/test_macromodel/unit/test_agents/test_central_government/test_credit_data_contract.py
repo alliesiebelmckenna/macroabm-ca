@@ -44,9 +44,7 @@ from macromodel.configurations.tax_parameters.central_government_builder import 
 # Committed schedules.
 #   parents[0]=test_central_government [1]=test_agents [2]=unit
 #   [3]=test_macromodel [4]=tests [5]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[5] / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[5] / "spoof_data" / "freda" / "personal_income_tax"
 _CREDITS_CSV = _COMMITTED_PIT_DIR / "non_refundable_tax_credits.csv"
 
 _YEAR = 2014
@@ -228,13 +226,9 @@ class TestPublishedScheduleReachesTheTaxComputation:
 
         # A lone filer: no age and no household context, so the Personal Amount
         # is the only credit for which they qualify.
-        ctx = PitContext(
-            employee_income=np.array([40000.0]), employee_si_rate=0.0
-        )
+        ctx = PitContext(employee_income=np.array([40000.0]), employee_si_rate=0.0)
         taxable = build_taxable_income_pool(ctx)
-        credit_defs = pit_credit_defs_to_state_dicts(
-            config.pit_non_refundable_tax_credits
-        )
+        credit_defs = pit_credit_defs_to_state_dicts(config.pit_non_refundable_tax_credits)
         credit_base = build_credit_base_pool(credit_defs, taxable, ctx)
 
         # BC 2014 published Personal Amount, valued at the published bottom rate.

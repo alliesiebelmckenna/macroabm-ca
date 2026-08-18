@@ -17,10 +17,7 @@ from macromodel.utils.prehooks import create_pit_schedule_update_hook
 
 # Committed BC schedules (test fixtures).
 #   parents[0]=test_country [1]=unit [2]=test_macromodel [3]=tests [4]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 class TestCountry:
@@ -130,9 +127,7 @@ class TestCountry:
         )
 
         country_configuration = CountryConfiguration(
-            central_government=CentralGovernmentConfiguration(
-                activate_progressive_pit=True
-            ),
+            central_government=CentralGovernmentConfiguration(activate_progressive_pit=True),
         )
 
         emission_factors = np.array(
@@ -206,9 +201,7 @@ class TestCountry:
         )
         assert "pit_uppers" not in country.central_government.states
 
-    def test_reset_keeps_the_schedule_table_and_calibrated_rate(
-        self, datawrapper, tmp_path
-    ):
+    def test_reset_keeps_the_schedule_table_and_calibrated_rate(self, datawrapper, tmp_path):
         """A reset government must be the same model as a freshly built one.
 
         ``Agent.__init__`` snapshots ``initial_states`` before
@@ -293,9 +286,7 @@ class TestCountry:
         scale = base.scale
         synthetic_country = dataclasses.replace(base, taxation=reader)
         country_configuration = CountryConfiguration(
-            central_government=CentralGovernmentConfiguration(
-                activate_progressive_pit=True
-            ),
+            central_government=CentralGovernmentConfiguration(activate_progressive_pit=True),
         )
 
         emission_factors = np.array(

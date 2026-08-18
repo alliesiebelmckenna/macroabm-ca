@@ -18,10 +18,7 @@ from macro_data.readers.taxation import TaxationDataWarning, TaxationReader, Tax
 
 # Committed schedules.
 #   parents[0]=test_readers [1]=unit [2]=test_macro_data [3]=tests [4]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 def _make_taxation_tree(root: Path, *, with_schedules: bool) -> Path:
@@ -72,16 +69,12 @@ class TestTaxationReader:
 class TestLoadTaxationReader:
     def test_none_path_is_silent_none(self, recwarn):
         assert _load_taxation_reader(None) is None
-        assert not [
-            w for w in recwarn.list if issubclass(w.category, TaxationDataWarning)
-        ]
+        assert not [w for w in recwarn.list if issubclass(w.category, TaxationDataWarning)]
 
     def test_absent_taxation_dir_is_silent_none(self, tmp_path, recwarn):
         # A taxation root that does not exist -> taxation simply not in use.
         assert _load_taxation_reader(tmp_path / "taxation") is None
-        assert not [
-            w for w in recwarn.list if issubclass(w.category, TaxationDataWarning)
-        ]
+        assert not [w for w in recwarn.list if issubclass(w.category, TaxationDataWarning)]
 
     def test_taxation_dir_without_schedules_warns(self, tmp_path):
         taxation = _make_taxation_tree(tmp_path, with_schedules=False)
@@ -159,5 +152,3 @@ class TestGeoFilteredBrackets:
         lower_bounds, _, rates = reader.pit_schedule.get_brackets(2014)
         assert np.allclose(lower_bounds, [0.0, 43906.0])
         assert np.allclose(rates, [0.0505, 0.0915])
-
-

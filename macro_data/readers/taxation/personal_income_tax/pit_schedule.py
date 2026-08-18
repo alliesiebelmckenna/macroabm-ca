@@ -1,13 +1,13 @@
 """
 Module for producing a Canadian personal income tax (PIT) schedule.
 
-This module produces the ``PITSchedule`` class, which reads, processes and stores year- and jurisdiction-specific personal income tax (PIT) parameters like tax rates and tax bracket thresholds that are used to compute income tax amounts payable by individuals in a progressive tax system. 
+This module produces the ``PITSchedule`` class, which reads, processes and stores year- and jurisdiction-specific personal income tax (PIT) parameters like tax rates and tax bracket thresholds that are used to compute income tax amounts payable by individuals in a progressive tax system.
 
 A tax is "progressive" if an individual's income in higher tax brackets (i.e., exceeding certain thresholds) is taxed at a higher marginal rate than their income in lower brackets, such that their average tax rate is less than the marginal tax rate corresponding to their income. "Jurisdictions" here refer to whether taxes are provincial, territorial, or federal.
 
 If supplied, ``PITSchedule`` also incorporates year- and jurisdiction-specific non-refundable tax credit (NRTC) parameters like credit amounts, clawback rates and eligibility criteria that can be used to reduce an individual's income tax payable. More information on NRTC functionality can be found in the documentation for ``TaxCreditComponent`` and ``NRTCSchedule``.
 
-``PITSchedule`` is used by ``TaxationReader`` which is then used to initialize the Central Government agent in the ``macromodel`` package of MacroABM-CA. 
+``PITSchedule`` is used by ``TaxationReader`` which is then used to initialize the Central Government agent in the ``macromodel`` package of MacroABM-CA.
 
 Example:
     ```python
@@ -48,12 +48,13 @@ from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
 _REQUIRED_COLS = {
     "year",  # tax parameter year
     "jurisdiction",  # jurisdiction key (e.g. "BC")
-    "lower",     # nominal lower income threshold
-    "rate",      # corresponding marginal tax rate
-    "index",     # whether tax brackets grow with inflation over time (1) or stay the same (0)
+    "lower",  # nominal lower income threshold
+    "rate",  # corresponding marginal tax rate
+    "index",  # whether tax brackets grow with inflation over time (1) or stay the same (0)
 }
 
 logger = logging.getLogger(__name__)
+
 
 class PITSchedule:
     """
@@ -102,9 +103,7 @@ class PITSchedule:
         juris = jurisdiction.upper()
         df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
-            raise ValueError(
-                f"CSV {path} does not contain any data for jurisdiction {juris}"
-            )
+            raise ValueError(f"CSV {path} does not contain any data for jurisdiction {juris}")
 
         df = df.dropna(subset=["year", "lower", "rate", "index"])
 
@@ -131,9 +130,7 @@ class PITSchedule:
         nrtc_path = Path(nrtc_path)
         logger.info("Loading tax credit parameter file: %s", nrtc_path.name)
         try:
-            self._non_refundable_tax_credits = NRTCSchedule.from_csv(
-                nrtc_path, jurisdiction=jurisdiction
-            )
+            self._non_refundable_tax_credits = NRTCSchedule.from_csv(nrtc_path, jurisdiction=jurisdiction)
         except ValueError:
             # Tax credit parameter file exists but has no data for this jurisdiction.
             logger.debug(
@@ -166,9 +163,9 @@ class PITSchedule:
         self,
         year: int,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """        
+        """
         Return a tuple containing year-specific PIT parameters (upper and lower income thresholds and corresponding marginal tax rates)
-        
+
         Args:
             year: Year for which to pull PIT parameters
 
@@ -180,7 +177,7 @@ class PITSchedule:
         """
         years_present = {int(y) for y in self._df["year"].unique()}
 
-        # Pull PIT parameters if data are available (i.e., if user-specified year within bounds) 
+        # Pull PIT parameters if data are available (i.e., if user-specified year within bounds)
         if year in years_present:
             # Filter to this year's rows only; never sort across all years.
             year_df = self._df[self._df["year"] == year].sort_values("lower")
@@ -199,6 +196,7 @@ class PITSchedule:
 
         return lowers, uppers, rates
 
+
 def compute_personal_income_tax(
     incomes: np.ndarray,
     uppers: np.ndarray,
@@ -206,9 +204,9 @@ def compute_personal_income_tax(
 ) -> np.ndarray:
     """
     Compute personal income tax (PIT) payable using a progressive tax schedule.
-    
+
     Each portion of an individual's income in different tax brackets (each defined by a lower and upper threshold) is taxed at corresponding marginal tax rates that increase for income exceeding pre-defined thresholds.
-    
+
     Args:
         incomes: array of individual-level incomes
         uppers: array of tax bracket upper thresholds (strictly increasing, ending in ``np.inf``)
@@ -229,6 +227,7 @@ def compute_personal_income_tax(
         lower = upper
     return tax
 
+
 def _validate_brackets(uppers: np.ndarray, rates: np.ndarray) -> None:
     """
     Ensure that:
@@ -237,19 +236,13 @@ def _validate_brackets(uppers: np.ndarray, rates: np.ndarray) -> None:
     3. Tax rates are in [0.0, 1.0]
     """
     if len(uppers) != len(rates):
-        raise ValueError(
-            f"uppers and rates must have the same length, "
-            f"got {len(uppers)} and {len(rates)}"
-        )
+        raise ValueError(f"uppers and rates must have the same length, got {len(uppers)} and {len(rates)}")
     # NaN is invisible to every comparison below: it is neither < 0 nor > 1,
     # and np.diff on a single bracket is not checked at all, so a NaN would
     # validate cleanly and then produce NaN tax for the whole population.
-    if np.isnan(np.asarray(uppers, dtype=float)).any() or np.isnan(
-        np.asarray(rates, dtype=float)
-    ).any():
+    if np.isnan(np.asarray(uppers, dtype=float)).any() or np.isnan(np.asarray(rates, dtype=float)).any():
         raise ValueError("bracket thresholds and rates must not be NaN")
     if len(uppers) > 1 and not np.all(np.diff(uppers) > 0):
         raise ValueError("uppers must be strictly increasing")
     if np.any(rates < 0) or np.any(rates > 1):
         raise ValueError("rates must be in [0, 1]")
-

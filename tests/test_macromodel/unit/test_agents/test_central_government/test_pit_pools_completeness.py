@@ -10,10 +10,8 @@ import numpy as np
 import pytest
 
 from macromodel.agents.central_government.pit_pools import (
-    PIT_INCOME_STREAMS,
     PitContext,
     assert_pooled_streams_are_scaled,
-    build_taxable_income_pool,
     build_withheld_income_pool,
 )
 
@@ -38,9 +36,9 @@ class TestPooledStreamsAreScaled:
         with pytest.raises(ValueError, match="rental_income"):
             assert_pooled_streams_are_scaled(ctx, streams=narrowed)
 
+
 class TestWithheldPool:
     def test_is_employment_only_and_net_of_the_si_levy(self):
         ctx = _ctx(rental_income=np.full(N, 5000.0), financial_income=np.full(N, 1000.0))
         withheld = build_withheld_income_pool(ctx)
         assert withheld == pytest.approx(np.full(N, 40000.0 * 0.95))
-

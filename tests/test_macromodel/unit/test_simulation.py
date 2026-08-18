@@ -842,17 +842,13 @@ def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
     configuration = SimulationConfiguration(
         country_configurations={
             "FRA": CountryConfiguration(
-                central_government=CentralGovernmentConfiguration(
-                    activate_progressive_pit=True
-                )
+                central_government=CentralGovernmentConfiguration(activate_progressive_pit=True)
             )
         }
     )
     configuration.seed = 0
 
-    simulation = Simulation.from_datawrapper(
-        datawrapper=taxed_datawrapper, simulation_configuration=configuration
-    )
+    simulation = Simulation.from_datawrapper(datawrapper=taxed_datawrapper, simulation_configuration=configuration)
 
     # Auto-registration: a per-year schedule table exists, so the indexing
     # pre-hook is registered by from_datawrapper.
@@ -872,11 +868,7 @@ def test_pit_schedule_update_autoregistered_and_advances(datawrapper, tmp_path):
 def test_no_pit_schedule_update_hook_without_taxation(datawrapper):
     """A plain (no-taxation) country registers no indexing pre-hook — flat
     parity, no auto-registration."""
-    configuration = SimulationConfiguration(
-        country_configurations={"FRA": CountryConfiguration()}
-    )
+    configuration = SimulationConfiguration(country_configurations={"FRA": CountryConfiguration()})
     configuration.seed = 0
-    simulation = Simulation.from_datawrapper(
-        datawrapper=datawrapper, simulation_configuration=configuration
-    )
+    simulation = Simulation.from_datawrapper(datawrapper=datawrapper, simulation_configuration=configuration)
     assert simulation.prehooks == []

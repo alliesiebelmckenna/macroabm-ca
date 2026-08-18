@@ -22,6 +22,7 @@ import numpy as np
 from macro_data import SyntheticCentralGovernment
 from macro_data.processing import TaxData
 from macro_data.readers.taxation import TaxationDataWarning
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
 from macromodel.agents.agent import Agent
 from macromodel.agents.central_government.central_government_ts import (
     create_central_government_timeseries,
@@ -31,8 +32,6 @@ from macromodel.configurations import CentralGovernmentConfiguration
 from macromodel.sim_calendar import steps_per_year
 from macromodel.timeseries import TimeSeries
 from macromodel.util.function_mapping import functions_from_model, update_functions
-from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
-
 
 # Configuration scalars the taxation schedule or ``tax_parameters.yaml`` can vary
 # by published year. Each must ride the per-year fragment, or it silently freezes
@@ -68,10 +67,37 @@ def pit_credit_defs_to_state_dicts(pit_non_refundable_tax_credits) -> list[dict]
     ]
 
 
+def pit_refundable_defs_to_state_dicts(pit_refundable_tax_credits) -> list[dict]:
+    """Convert configuration ``RefundableCreditDef`` objects to runtime dicts.
+
+    The refundable counterpart of ``pit_credit_defs_to_state_dicts``, and it
+    carries two keys that one has no use for: ``credit_name``, which groups the
+    components the taper applies to jointly, and ``delivery``, which decides
+    which year the money reaches the household in.
+    """
+    return [
+        {
+            "credit_name": t.credit_name,
+            "credit": t.credit,
+            "delivery": t.delivery,
+            "amount": t.amount,
+            "amount_basis": t.amount_basis,
+            "eligibility_age_min": t.eligibility_age_min,
+            "clawback": t.clawback,
+            "clawback_rate": t.clawback_rate,
+        }
+        for t in pit_refundable_tax_credits
+    ]
+
+
 # Flags that DEFER work to the year-end filing. Kept as module data so the check
 # derives its own invalid set: four holes were found here in sequence, each by
 # widening a hand-written enumeration that then claimed completeness again. A
 # flag added here is covered without editing the check.
+# The refundable credit's instalment path pays a quarter at each of four
+# periods, beginning AT the filing step.
+_RTC_INSTALMENTS = 4
+
 FILING_DEPENDENT_FLAGS = (
     "pit_credits_at_filing",
     "pit_investment_at_year_end",
@@ -183,6 +209,10 @@ class CentralGovernment(Agent):
             brackets = np.array(configuration.pit_brackets, dtype=float)
             states["pit_uppers"] = brackets[:, 0]
             states["pit_rates"] = brackets[:, 1]
+            if configuration.pit_refundable_tax_credits is not None:
+                states["pit_refundable_tax_credits"] = pit_refundable_defs_to_state_dicts(
+                    configuration.pit_refundable_tax_credits
+                )
             if configuration.pit_non_refundable_tax_credits is not None:
                 states["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                     configuration.pit_non_refundable_tax_credits
@@ -338,9 +368,7 @@ class CentralGovernment(Agent):
         if self.states.get("pit_year_end_reconciliation", False):
             return
 
-        stranded = [
-            name for name in FILING_DEPENDENT_FLAGS if self.states.get(name, False)
-        ]
+        stranded = [name for name in FILING_DEPENDENT_FLAGS if self.states.get(name, False)]
         if not stranded:
             return
 
@@ -378,6 +406,7 @@ class CentralGovernment(Agent):
         nrtc_base_per_ind: np.ndarray | None = None,
         nrtc_direct_per_ind: np.ndarray | None = None,
         annual_credit_base=None,
+        annual_rtc=None,
     ) -> None:
         """Calculate all tax revenues for the current period.
 
@@ -450,10 +479,16 @@ class CentralGovernment(Agent):
         pit_uppers = self.states.get("pit_uppers")
         pit_rates = self.states.get("pit_rates")
         settlement = 0.0  # only a filing on the progressive path makes this non-zero
+        # Booked to a DIFFERENT ledger than the settlement: a refundable credit
+        # is expenditure at its full amount, not revenue foregone, so it never
+        # nets into taxes_income.
+        rtc_settlement = 0.0
+        rtc_instalment = 0.0
+        # Filled only by a filing, for the same reason as the settlement: the
+        # year's credits are worth what the year's income makes them worth.
+        credit_granted: list = []
 
-        self._fall_back_if_deferred_work_cannot_land(
-            pit_uppers is not None and pit_rates is not None
-        )
+        self._fall_back_if_deferred_work_cannot_land(pit_uppers is not None and pit_rates is not None)
 
         if pit_uppers is not None and pit_rates is not None:
             # The pools are assembled by the processing phase, which alone holds
@@ -474,10 +509,7 @@ class CentralGovernment(Agent):
             # the full base at the filing below, which is why the accumulator keeps
             # receiving ``taxable_income_per_ind`` and not this.
             withheld_pool = taxable_income_per_ind
-            if (
-                self.states.get("pit_investment_at_year_end", False)
-                and withheld_income_per_ind is not None
-            ):
+            if self.states.get("pit_investment_at_year_end", False) and withheld_income_per_ind is not None:
                 withheld_pool = withheld_income_per_ind
             total_income_tax = self.compute_pit(
                 withheld_pool,
@@ -486,13 +518,15 @@ class CentralGovernment(Agent):
                 steps_per_year=factor,
                 out_tax_per_ind=tax_per_ind,
             )
-            settlement = self._reconcile_tax_year(
+            settlement, rtc_settlement, rtc_instalment = self._reconcile_tax_year(
                 taxable_income_per_ind,
                 tax_per_ind[0],
                 nrtc_base_per_ind,
                 nrtc_direct_per_ind,
                 steps_per_year=factor,
                 annual_credit_base=annual_credit_base,
+                annual_rtc=annual_rtc,
+                out_credit_granted=credit_granted,
             )
             # Revenue is a scalar line, so the per-individual settlement collapses
             # here rather than at source. np.sum also accepts the flat path's 0.0.
@@ -512,11 +546,28 @@ class CentralGovernment(Agent):
         # visible. Zero on the flat path and at every period that is not a filing.
         self.ts.pit_year_end_settlement.append([float(np.sum(settlement))])
 
+        # Recorded separately from revenue, and separately from each other: the
+        # settlement leg pays with this year's filing, the instalment leg pays
+        # the year that follows it. Summing them would merge two different years.
+        self.ts.pit_rtc_settlement.append([float(np.sum(rtc_settlement))])
+        self.ts.pit_rtc_instalments.append([float(np.sum(rtc_instalment))])
+
+        # Revenue foregone to the non-refundable credits at this filing. Reported,
+        # never booked: unlike the refundable credits above, nothing is paid out,
+        # so it belongs beside the revenue line rather than in it.
+        self.ts.pit_non_refundable_credits_granted.append([float(sum(credit_granted))])
+
+        # Per individual, for the payment circuit. Published on states rather
+        # than only summed into a series because the household leg needs WHO is
+        # owed: the transfer machinery carries the money, but its own allocation
+        # would spread it by a fitted share instead of by eligibility.
+        self.states["pit_rtc_paid_per_ind"] = (
+            np.asarray(rtc_settlement) + np.asarray(rtc_instalment) if not np.isscalar(rtc_settlement) else 0.0
+        )
+
         # Rental tax: a reporting figure (feeds GDP rent_received), already
         # inside taxes_income; the effective Income Tax rate on rent paid.
-        self.ts.taxes_rental_income.append(
-            [self.states["Income Tax"] * current_total_rent_paid]
-        )
+        self.ts.taxes_rental_income.append([self.states["Income Tax"] * current_total_rent_paid])
 
         # Taxes on employer social insurance
         self.ts.taxes_employer_si.append([self.states["Employer Social Insurance Tax"] * tot_wages_employed_ind])
@@ -557,9 +608,7 @@ class CentralGovernment(Agent):
         pit_uppers = self.states["pit_uppers"]
         pit_rates = self.states["pit_rates"]
 
-        pit_per_individual = compute_personal_income_tax(
-            taxable_income_per_ind, pit_uppers, pit_rates
-        )
+        pit_per_individual = compute_personal_income_tax(taxable_income_per_ind, pit_uppers, pit_rates)
 
         # Non-refundable credits, floored at zero (excess is lost, not refunded).
         # Skipped when the credits are deferred: the period withholds GROSS and
@@ -607,7 +656,9 @@ class CentralGovernment(Agent):
         nrtc_direct_per_ind: np.ndarray | None,
         steps_per_year: float = 1.0,
         annual_credit_base=None,
-    ) -> np.ndarray:
+        annual_rtc=None,
+        out_credit_granted: list | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Settle the previous tax year and carry this period into the next.
 
         At the first period of a new year the liability on the year's actual
@@ -624,14 +675,21 @@ class CentralGovernment(Agent):
         re-values the credits there, since a credit that tapers with income does
         not average back to its annual figure. Without it the accumulated average
         stands in, and the settlement is approximate for those credits.
+
+        ``out_credit_granted`` optionally receives one float per filing: the
+        revenue the non-refundable credits removed from the settled year's bill.
+        It is an out-parameter rather than a fourth return value so that the
+        callers already unpacking three keep working.
         """
         if not self.states.get("pit_year_end_reconciliation", False):
-            return np.zeros(len(annualized_income_per_ind))
+            zero = np.zeros(len(annualized_income_per_ind))
+            return zero, zero.copy(), zero.copy()
 
         factor = steps_per_year
         n_ind = len(annualized_income_per_ind)
 
         settlement = np.zeros(n_ind)
+        rtc_settlement = np.zeros(n_ind)
 
         ytd_income = self.states.get("pit_ytd_income")
         if ytd_income is None or len(ytd_income) != n_ind:
@@ -666,6 +724,7 @@ class CentralGovernment(Agent):
             uppers = self.states["pit_uppers"]
             rates = self.states["pit_rates"]
             year_credits = None
+            year_rtc = None
             calendar_year = self.states.get("pit_calendar_year")
             if calendar_year is not None:
                 settled = self._pit_schedule_for_year(int(calendar_year) - 1)
@@ -673,23 +732,45 @@ class CentralGovernment(Agent):
                     uppers = settled["pit_uppers"]
                     rates = settled["pit_rates"]
                     year_credits = settled.get("pit_non_refundable_tax_credits")
+                    year_rtc = settled.get("pit_refundable_tax_credits")
 
             annual_tax = compute_personal_income_tax(ytd_income, uppers, rates)
             # Re-value the credits on the income the tax was assessed on.
             annual_credit = ytd_credit
             if annual_credit_base is not None:
-                annual_credit = ytd_direct_credit + annual_credit_base(
-                    ytd_income, year_credits
-                ) * float(rates[0])
+                annual_credit = ytd_direct_credit + annual_credit_base(ytd_income, year_credits) * float(rates[0])
             # Both stay PER INDIVIDUAL: the floor must apply per person, or a
             # negative liability offsets a positive one and quietly reduces
             # revenue. The caller sums.
             liability = np.maximum(0.0, annual_tax - annual_credit)
+            # What the credits actually removed, which is not what they were
+            # worth: the floor above discards the excess for anyone whose credit
+            # exceeds their tax. Reported here, at the one moment the year's
+            # credits are valued on the year's real income, so the figure is the
+            # revenue foregone rather than the entitlement granted.
+            if out_credit_granted is not None:
+                out_credit_granted.append(float(np.sum(annual_tax - liability)))
             withheld = ytd_tax
             # A filing has one outcome and one moment: the taxpayer either pays
             # what is owed or receives a refund, both at the filing. A refund
             # reduces the period's revenue, an amount owing adds to it.
             settlement += liability - withheld
+
+            # The refundable credit is valued HERE, on the settled year's
+            # income, and never per period: its taper needs the year's total,
+            # which does not exist until now. NRTC first, then RTC -- given the
+            # accounts ruling (refundable = expenditure at full value), applying
+            # the RTC against the liability would book it twice.
+            if annual_rtc is not None:
+                rtc_now, rtc_later = annual_rtc(ytd_income, year_rtc)
+                rtc_settlement += rtc_now
+                # The instalment entitlement is fixed at the filing and drawn
+                # down over four periods STARTING HERE (q5, q9, q13...), so the
+                # cohort fills the year after the one assessed and cannot
+                # overlap the next award.
+                self.states["pit_rtc_instalment_amount"] = rtc_later / _RTC_INSTALMENTS
+                self.states["pit_rtc_instalments_left"] = _RTC_INSTALMENTS
+
             ytd_income = np.zeros(n_ind)
             ytd_tax = np.zeros(n_ind)
             ytd_credit = np.zeros(n_ind)
@@ -697,9 +778,7 @@ class CentralGovernment(Agent):
 
         period_credit = np.zeros(n_ind)
         if nrtc_base_per_ind is not None:
-            period_credit = period_credit + nrtc_base_per_ind * float(
-                self.states["pit_rates"][0]
-            )
+            period_credit = period_credit + nrtc_base_per_ind * float(self.states["pit_rates"][0])
         period_direct = np.zeros(n_ind)
         if nrtc_direct_per_ind is not None:
             period_direct = period_direct + nrtc_direct_per_ind
@@ -709,12 +788,22 @@ class CentralGovernment(Agent):
         # fallback for the rest, which the filing re-values when it can.
         self.states["pit_ytd_income"] = ytd_income + annualized_income_per_ind / factor
         self.states["pit_ytd_tax"] = ytd_tax + tax_per_ind
-        self.states["pit_ytd_credit"] = (
-            ytd_credit + (period_credit + period_direct) / factor
-        )
+        self.states["pit_ytd_credit"] = ytd_credit + (period_credit + period_direct) / factor
         self.states["pit_ytd_direct_credit"] = ytd_direct_credit + period_direct / factor
 
-        return settlement
+        # Draw down this period's instalment, including at the filing itself.
+        # Carried in states rather than recomputed: the entitlement belongs to
+        # the year just settled, and the periods that pay it out have no access
+        # to that year's income.
+        rtc_instalment = np.zeros(n_ind)
+        left = int(self.states.get("pit_rtc_instalments_left", 0))
+        if left > 0:
+            per_period = np.asarray(self.states.get("pit_rtc_instalment_amount", rtc_instalment))
+            if len(per_period) == n_ind:
+                rtc_instalment = per_period.copy()
+            self.states["pit_rtc_instalments_left"] = left - 1
+
+        return settlement, rtc_settlement, rtc_instalment
 
     def compute_taxes_on_products(self) -> float:
         """Calculate total taxes on products and production.
@@ -800,6 +889,10 @@ class CentralGovernment(Agent):
             self.states["pit_non_refundable_tax_credits"] = fragment["pit_non_refundable_tax_credits"]
         else:
             self.states.pop("pit_non_refundable_tax_credits", None)
+        if "pit_refundable_tax_credits" in fragment:
+            self.states["pit_refundable_tax_credits"] = fragment["pit_refundable_tax_credits"]
+        else:
+            self.states.pop("pit_refundable_tax_credits", None)
         # Year-varying scalars. Assigned but never popped: the dividend path
         # indexes these states directly, so a missing year must hold the
         # previous value rather than raise.

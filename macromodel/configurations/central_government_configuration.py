@@ -66,20 +66,74 @@ class TaxCreditDef(BaseModel):
 
     credit: str = Field(description="Human-readable credit name (e.g. 'Age Amount').")
     amount: float = Field(
-        default=0.0, ge=0.0, json_schema_extra=CURRENCY,
+        default=0.0,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Base dollar amount.",
     )
     eligibility_age_min: Optional[int] = Field(
-        default=None, json_schema_extra=YEARS,
+        default=None,
+        json_schema_extra=YEARS,
         description="Minimum age (e.g. 65 for Age Amount).",
     )
     clawback: Optional[float] = Field(
-        default=None, ge=0.0, json_schema_extra=CURRENCY,
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Income at which phaseout begins (own income for Age Amount, spouse for Spousal).",
     )
     top: Optional[float] = Field(
-        default=None, ge=0.0, json_schema_extra=CURRENCY,
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Income at which credit is fully eliminated.",
+    )
+
+
+class RefundableCreditDef(BaseModel):
+    """A single refundable tax credit component with eligibility rules.
+
+    Mirrors ``RefundableCreditComponent`` from the data layer. Dollar amounts
+    are per-person, as in ``TaxCreditDef``, so the same scaling seam converts
+    them to agent units.
+
+    Two fields have no non-refundable counterpart, and both carry behaviour:
+    ``delivery`` decides WHEN the money reaches the household, and
+    ``amount_basis`` decides how many times the amount is granted.
+    """
+
+    credit_name: str = Field(description="The instrument; components sharing it are summed before the taper.")
+    credit: str = Field(description="Eligibility class, e.g. 'Dependant Amount'.")
+    delivery: Literal["settlement", "instalments"] = Field(
+        description="'settlement' pays with the year-end settlement; 'instalments' "
+        "pays a quarter at each of four periods beginning at the filing."
+    )
+    amount: float = Field(
+        default=0.0,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
+        description="Credit value in per-person dollars.",
+    )
+    amount_basis: Literal["once", "per_dependant"] = Field(
+        default="once",
+        description="Multiplicity only; eligibility lives in `credit`.",
+    )
+    eligibility_age_min: Optional[int] = Field(
+        default=None,
+        json_schema_extra=YEARS,
+        description="Minimum age, where the class is age-gated.",
+    )
+    clawback: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
+        description="Income at which the taper begins.",
+    )
+    clawback_rate: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        json_schema_extra=DIMENSIONLESS,
+        description="Fraction of income above `clawback` that reduces the credit.",
     )
 
 
@@ -116,14 +170,12 @@ class CentralGovernmentConfiguration(BaseModel):
     # using the scalar Income Tax rate (refreshed each period to actual / base).
     pit_brackets: Optional[list[tuple[float, float]]] = Field(
         default=None,
-        description="Progressive PIT brackets as (upper_bound, rate). "
-        "None means use the flat Income Tax rate.",
+        description="Progressive PIT brackets as (upper_bound, rate). None means use the flat Income Tax rate.",
     )
 
     pit_non_refundable_tax_credits: Optional[list[TaxCreditDef]] = Field(
         default=None,
-        description="List of non-refundable tax credits with eligibility rules. "
-        "None means no credits applied.",
+        description="List of non-refundable tax credits with eligibility rules. None means no credits applied.",
     )
 
     pit_year_end_reconciliation: bool = Field(
@@ -132,6 +184,14 @@ class CentralGovernmentConfiguration(BaseModel):
         "over-withholding at the first period of the new year and collect any "
         "shortfall in the period after. Set False to withhold without reconciling, "
         "which leaves a taxpayer whose income varied having paid the wrong amount.",
+    )
+
+    pit_refundable_tax_credits: Optional[list[RefundableCreditDef]] = Field(
+        default=None,
+        description="Refundable credit components for the run's jurisdiction. "
+        "None means no refundable credit is granted. Unlike the non-refundable "
+        "list this is government EXPENDITURE at its full amount, not revenue "
+        "foregone, and it is never floored at zero.",
     )
 
     pit_credits_at_filing: bool = Field(
@@ -208,4 +268,3 @@ class CentralGovernmentConfiguration(BaseModel):
         json_schema_extra=DIMENSIONLESS,
         description="BC dividend tax credit on the grossed-up other-than-eligible dividend (2014: 0.0259).",
     )
-

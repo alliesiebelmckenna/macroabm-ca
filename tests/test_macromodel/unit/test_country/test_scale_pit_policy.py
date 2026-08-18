@@ -16,7 +16,6 @@ These tests pin the single scaling seam:
 
 import numpy as np
 import pytest
-from pydantic import Field
 
 from macro_data.readers.taxation import TaxationReader
 from macromodel.agents.central_government.central_government import (
@@ -31,9 +30,7 @@ from macromodel.configurations.central_government_configuration import (
     monetary_field_names,
 )
 from macromodel.country.country import (
-    _build_pit_schedule_by_year,
     _scale_pit_policy,
-    _scaled_tax_credit,
 )
 
 SCALE = 1000
@@ -58,19 +55,13 @@ def _pit_config(**overrides) -> CentralGovernmentConfiguration:
     return CentralGovernmentConfiguration(**base)
 
 
-
-
 class TestUnitDeclarationFailClosed:
-
     def test_undeclared_numeric_config_field_raises(self):
         class BadConfig(CentralGovernmentConfiguration):
             new_tax_scalar: float = 0.0
 
         with pytest.raises(TypeError, match="unit"):
             monetary_field_names(BadConfig)
-
-
-
 
 
 class TestScalingHomogeneity:
@@ -126,5 +117,3 @@ def _credit_bearing_reader(tmp_path):
     (tmp_path / "rates_thresholds.csv").write_text(_PIT_HISTORICAL)
     (tmp_path / "non_refundable_tax_credits.csv").write_text(_TAX_CREDITS)
     return TaxationReader.from_dir(tmp_path, jurisdiction="bc")
-
-

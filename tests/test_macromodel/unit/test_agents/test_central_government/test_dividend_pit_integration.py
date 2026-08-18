@@ -13,9 +13,7 @@ import numpy as np
 import pytest
 
 from macromodel.agents.central_government.pit_pools import (
-    PitContext,
     build_dividend_tax_items,
-    build_taxable_income_pool,
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.sim_calendar import steps_per_year
@@ -30,6 +28,7 @@ _NONELIG_DTC = 0.0259
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _bank_items(dividend_income, small_business_share):
     return build_dividend_tax_items(
@@ -73,11 +72,9 @@ def _build_cg_with_integration(datawrapper, bank_share, firm_share=0.9):
 # ---------------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------------
 # 2. End-to-end revenue
 # ---------------------------------------------------------------------------
-
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +82,10 @@ def _build_cg_with_integration(datawrapper, bank_share, firm_share=0.9):
 # ---------------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------------
 # 4. Country-level wiring: bank profits → gross dividend → grossed-up + DTC
 # ---------------------------------------------------------------------------
+
 
 class TestBankDividendCountryWiring:
     """Full chain from raw bank profits to PIT revenue, reading from CG states.
@@ -101,7 +98,6 @@ class TestBankDividendCountryWiring:
     _BANK_PROFIT = 2_000.0
     _PAYOUT = 0.5
     _BANK_SHARE = 0.25
-
 
     def test_bank_profits_to_pit_revenue(self, test_individuals, datawrapper):
         """Full chain from bank profits to PIT revenue matches the reviewer's formula."""

@@ -22,13 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-
 # Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
     "year",  # taxation year the row applies to
     "jurisdiction",  # jurisdiction key (e.g. "BC")
-    "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
-    "index",     # schema check only: required for shape, no longer read
+    "credit",  # credit name, e.g. "Personal Amount", "Age Amount"
+    "index",  # schema check only: required for shape, no longer read
 }
 
 
@@ -40,10 +39,10 @@ _TC_REQUIRED_COLS = {
 # credit pool contributes zero, so an unexpressible credit is never granted
 # universally. Register a credit here only together with its runtime branch.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
-    "Personal Amount":          {},                                     # universal
-    "Age Amount":               {"age_min": 65},
-    "Spousal Amount":           {"in_couple_household": True},          # married / common-law
-    "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
+    "Personal Amount": {},  # universal
+    "Age Amount": {"age_min": 65},
+    "Spousal Amount": {"in_couple_household": True},  # married / common-law
+    "Equivalent To Spouse Amount": {"is_single_parent": True},  # single parent / caregiver
 }
 
 
@@ -124,9 +123,7 @@ class NRTCSchedule:
         juris = jurisdiction.upper()
         df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
-            raise ValueError(
-                f"Tax-credit CSV {path} does not contain any rows for jurisdiction {juris}"
-            )
+            raise ValueError(f"Tax-credit CSV {path} does not contain any rows for jurisdiction {juris}")
 
         # Minimum year, not the first row's, so an unsorted CSV does not shift
         # the base credit set.
@@ -204,8 +201,7 @@ class NRTCSchedule:
         path = schedule_dir / filename
         if not path.exists():
             raise FileNotFoundError(
-                f"Tax-credit file not found: {path}\n"
-                f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
+                f"Tax-credit file not found: {path}\nAvailable: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 

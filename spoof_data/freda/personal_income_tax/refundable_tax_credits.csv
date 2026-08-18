@@ -1,0 +1,86 @@
+year,jurisdiction,credit_name,credit,delivery,amount,amount_basis,top,rate,clawback,clawback_rate,index
+2014,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,115.5,once,,1.0,32864.12,0.02,1
+2014,BC,Climate Action Tax Credit,Spousal Amount,instalments,115.5,once,,1.0,38340.99,0.02,1
+2014,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,115.5,once,,1.0,38340.99,0.02,1
+2014,BC,Climate Action Tax Credit,Dependant Amount,instalments,34.5,per_dependant,,1.0,38340.99,0.02,1
+2014,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,67182.54,1.0,47182.54,0.02,1
+2015,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,115.5,once,,1.0,33093.89,0.02,1
+2015,BC,Climate Action Tax Credit,Spousal Amount,instalments,115.5,once,,1.0,38609.05,0.02,1
+2015,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,115.5,once,,1.0,38609.05,0.02,1
+2015,BC,Climate Action Tax Credit,Dependant Amount,instalments,34.5,per_dependant,,1.0,38609.05,0.02,1
+2015,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,67698.41,1.0,47698.41,0.02,1
+2016,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,115.5,once,,1.0,33390.26,0.02,1
+2016,BC,Climate Action Tax Credit,Spousal Amount,instalments,115.5,once,,1.0,38954.82,0.02,1
+2016,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,115.5,once,,1.0,38954.82,0.02,1
+2016,BC,Climate Action Tax Credit,Dependant Amount,instalments,34.5,per_dependant,,1.0,38954.82,0.02,1
+2016,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,68571.43,1.0,48571.43,0.02,1
+2017,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,135.0,once,,1.0,33993.0,0.02,1
+2017,BC,Climate Action Tax Credit,Spousal Amount,instalments,135.0,once,,1.0,39658.0,0.02,1
+2017,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,135.0,once,,1.0,39658.0,0.02,1
+2017,BC,Climate Action Tax Credit,Dependant Amount,instalments,40.0,per_dependant,,1.0,39658.0,0.02,1
+2017,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,69603.17,1.0,49603.17,0.02,1
+2018,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,154.5,once,,1.0,34876.0,0.02,1
+2018,BC,Climate Action Tax Credit,Spousal Amount,instalments,154.5,once,,1.0,40689.0,0.02,1
+2018,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,154.5,once,,1.0,40689.0,0.02,1
+2018,BC,Climate Action Tax Credit,Dependant Amount,instalments,45.5,per_dependant,,1.0,40689.0,0.02,1
+2018,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,70952.38,1.0,50952.38,0.02,1
+2019,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,174.0,once,,1.0,35748.0,0.02,1
+2019,BC,Climate Action Tax Credit,Spousal Amount,instalments,174.0,once,,1.0,41706.0,0.02,1
+2019,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,174.0,once,,1.0,41706.0,0.02,1
+2019,BC,Climate Action Tax Credit,Dependant Amount,instalments,51.0,per_dependant,,1.0,41706.0,0.02,1
+2019,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,72142.86,1.0,52142.86,0.02,1
+2020,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,174.0,once,,1.0,36142.0,0.02,1
+2020,BC,Climate Action Tax Credit,Spousal Amount,instalments,174.0,once,,1.0,42165.0,0.02,1
+2020,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,174.0,once,,1.0,42165.0,0.02,1
+2020,BC,Climate Action Tax Credit,Dependant Amount,instalments,51.0,per_dependant,,1.0,42165.0,0.02,1
+2020,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,72539.68,1.0,52539.68,0.02,1
+2021,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,685.5,once,,1.0,36901.0,0.02,1
+2021,BC,Climate Action Tax Credit,Spousal Amount,instalments,685.5,once,,1.0,43051.0,0.02,1
+2021,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,685.5,once,,1.0,43051.0,0.02,1
+2021,BC,Climate Action Tax Credit,Dependant Amount,instalments,179.5,per_dependant,,1.0,43051.0,0.02,1
+2021,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,74007.94,1.0,54007.94,0.02,1
+2022,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,447.0,once,,1.0,39115.0,0.02,1
+2022,BC,Climate Action Tax Credit,Spousal Amount,instalments,223.5,once,,1.0,50170.0,0.02,1
+2022,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,223.5,once,,1.0,50170.0,0.02,1
+2022,BC,Climate Action Tax Credit,Dependant Amount,instalments,111.5,per_dependant,,1.0,50170.0,0.02,1
+2022,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,77738.1,1.0,57738.1,0.02,1
+2023,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,504.0,once,,1.0,41071.0,0.02,1
+2023,BC,Climate Action Tax Credit,Spousal Amount,instalments,252.0,once,,1.0,57288.0,0.02,1
+2023,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,252.0,once,,1.0,57288.0,0.02,1
+2023,BC,Climate Action Tax Credit,Dependant Amount,instalments,126.0,per_dependant,,1.0,57288.0,0.02,1
+2023,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,80000.0,1.0,60000.0,0.02,1
+2024,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,529.2,once,,1.0,43124.38,0.02,1
+2024,BC,Climate Action Tax Credit,Spousal Amount,instalments,264.6,once,,1.0,60152.16,0.02,1
+2024,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,264.6,once,,1.0,60152.16,0.02,1
+2024,BC,Climate Action Tax Credit,Dependant Amount,instalments,132.3,per_dependant,,1.0,60152.16,0.02,1
+2024,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,83000.0,1.0,63000.0,0.02,1
+2025,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,544.01,once,,1.0,44331.04,0.02,1
+2025,BC,Climate Action Tax Credit,Spousal Amount,instalments,272.0,once,,1.0,61835.27,0.02,1
+2025,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,272.0,once,,1.0,61835.27,0.02,1
+2025,BC,Climate Action Tax Credit,Dependant Amount,instalments,136.0,per_dependant,,1.0,61835.27,0.02,1
+2025,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,84764.0,1.0,64764.0,0.02,1
+2026,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,555.95,once,,1.0,45304.59,0.02,1
+2026,BC,Climate Action Tax Credit,Spousal Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2026,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2026,BC,Climate Action Tax Credit,Dependant Amount,instalments,138.99,per_dependant,,1.0,63193.24,0.02,1
+2026,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,86184.79,1.0,66184.79,0.02,1
+2027,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,555.95,once,,1.0,45304.59,0.02,1
+2027,BC,Climate Action Tax Credit,Spousal Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2027,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2027,BC,Climate Action Tax Credit,Dependant Amount,instalments,138.99,per_dependant,,1.0,63193.24,0.02,1
+2027,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,86184.79,1.0,66184.79,0.02,1
+2028,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,555.95,once,,1.0,45304.59,0.02,1
+2028,BC,Climate Action Tax Credit,Spousal Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2028,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2028,BC,Climate Action Tax Credit,Dependant Amount,instalments,138.99,per_dependant,,1.0,63193.24,0.02,1
+2028,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,86184.79,1.0,66184.79,0.02,1
+2029,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,555.95,once,,1.0,45304.59,0.02,1
+2029,BC,Climate Action Tax Credit,Spousal Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2029,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2029,BC,Climate Action Tax Credit,Dependant Amount,instalments,138.99,per_dependant,,1.0,63193.24,0.02,1
+2029,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,86184.79,1.0,66184.79,0.02,1
+2030,BC,Climate Action Tax Credit,Eligible Individual Amount,instalments,555.95,once,,1.0,45304.59,0.02,1
+2030,BC,Climate Action Tax Credit,Spousal Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2030,BC,Climate Action Tax Credit,Equivalent To Spouse Amount,instalments,277.98,once,,1.0,63193.24,0.02,1
+2030,BC,Climate Action Tax Credit,Dependant Amount,instalments,138.99,per_dependant,,1.0,63193.24,0.02,1
+2030,BC,Renter's Tax Credit,Renter's Amount,settlement,400.0,once,86184.79,1.0,66184.79,0.02,1

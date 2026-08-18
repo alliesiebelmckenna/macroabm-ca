@@ -158,12 +158,8 @@ def read_tax_parameters(
     # overrides it field by field. A jurisdiction listed with no values (or not
     # listed at all) therefore inherits the defaults, which is what lets a new
     # province run before anyone has tuned its assumptions.
-    base = _select_year(
-        data.get(_DEFAULT_KEY) or {}, year, _DEFAULT_KEY, yaml_path, required=False
-    )
-    own = _select_year(
-        data.get(jurisdiction) or {}, year, jurisdiction, yaml_path, required=False
-    )
+    base = _select_year(data.get(_DEFAULT_KEY) or {}, year, _DEFAULT_KEY, yaml_path, required=False)
+    own = _select_year(data.get(jurisdiction) or {}, year, jurisdiction, yaml_path, required=False)
 
     if not base and not own:
         raise KeyError(
