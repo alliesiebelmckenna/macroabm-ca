@@ -83,10 +83,10 @@ def _charge(cg, taxable, credit_base=None, direct_credits=None):
         current_household_new_real_wealth=np.zeros(n),
         taxes_less_subsidies_rates=np.zeros(1),
         taxable_income_per_ind=taxable,
-        credit_base_per_ind=(
+        nrtc_base_per_ind=(
             np.zeros_like(taxable) if credit_base is None else credit_base
         ),
-        direct_credits_per_ind=direct_credits,
+        nrtc_direct_per_ind=direct_credits,
     )
     return cg.ts.get_aggregate("taxes_income")[-1]
 
@@ -95,8 +95,15 @@ class TestFilingAcrossRealPeriods:
     """State has to survive between calls, which a single-call test cannot show."""
 
     def test_no_settlement_reaches_revenue_when_the_filing_is_off(self, datawrapper):
+        # Reconciliation off is only a coherent configuration with nothing
+        # deferred to the filing. Leaving the deferring flags at their defaults
+        # here is what the fail-closed validator refuses, and rightly: the
+        # credits would be granted nowhere and investment income never taxed.
         cg = _build_country(
-            datawrapper, pit_year_end_reconciliation=False
+            datawrapper,
+            pit_year_end_reconciliation=False,
+            pit_credits_at_filing=False,
+            pit_investment_at_year_end=False,
         ).central_government
         f = int(steps_per_year())
         earning = np.full(2, float(cg.states["pit_uppers"][0])) * steps_per_year()

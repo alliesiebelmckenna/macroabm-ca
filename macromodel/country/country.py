@@ -50,9 +50,11 @@ from macromodel.agents.central_government.central_government import (
 from macromodel.agents.central_government.pit_pools import (
     PitContext,
     annualize_pit_context,
+    assert_pooled_streams_are_scaled,
     build_credit_base_pool,
     build_dividend_tax_items,
     build_taxable_income_pool,
+    build_withheld_income_pool,
 )
 from macromodel.agents.firms import Firms
 from macromodel.agents.government_entities.government_entities import GovernmentEntities
@@ -1625,11 +1627,17 @@ class Country:
         )
         # The grossed-up dividend is already annual; scale the raw streams.
         pit_ctx = annualize_pit_context(pit_ctx, steps_per_year())
+        # W1: fail closed if a pooled stream is scaled nowhere. The scale-up is
+        # per stream and the scale-down is on the whole pooled array, so a stream
+        # dropped from the scaling set but left in the pool is understated by the
+        # annualization factor without anything raising.
+        assert_pooled_streams_are_scaled(pit_ctx)
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
+        withheld_income_per_ind = build_withheld_income_pool(pit_ctx)
         credit_defs = self.central_government.states.get(
             "pit_non_refundable_tax_credits"
         )
-        credit_base_per_ind = build_credit_base_pool(
+        nrtc_base_per_ind = build_credit_base_pool(
             credit_defs, taxable_income_per_ind, pit_ctx
         )
 
@@ -1663,8 +1671,9 @@ class Country:
             current_household_new_real_wealth=self.households.ts.current("investment"),
             current_total_exports=self.economy.ts.current("exports_before_taxes").sum(),
             taxable_income_per_ind=taxable_income_per_ind,
-            credit_base_per_ind=credit_base_per_ind,
-            direct_credits_per_ind=dividend_tax_credit_per_ind,
+            withheld_income_per_ind=withheld_income_per_ind,
+            nrtc_base_per_ind=nrtc_base_per_ind,
+            nrtc_direct_per_ind=dividend_tax_credit_per_ind,
             annual_credit_base=annual_credit_base,
         )
 

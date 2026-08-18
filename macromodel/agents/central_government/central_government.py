@@ -13,6 +13,7 @@ The central government plays a crucial role in:
 - Public finance management
 """
 
+import warnings
 from typing import Any
 
 import h5py
@@ -20,6 +21,7 @@ import numpy as np
 
 from macro_data import SyntheticCentralGovernment
 from macro_data.processing import TaxData
+from macro_data.readers.taxation import TaxationDataWarning
 from macromodel.agents.agent import Agent
 from macromodel.agents.central_government.central_government_ts import (
     create_central_government_timeseries,
@@ -64,6 +66,16 @@ def pit_credit_defs_to_state_dicts(pit_non_refundable_tax_credits) -> list[dict]
         }
         for t in pit_non_refundable_tax_credits
     ]
+
+
+# Flags that DEFER work to the year-end filing. Kept as module data so the check
+# derives its own invalid set: four holes were found here in sequence, each by
+# widening a hand-written enumeration that then claimed completeness again. A
+# flag added here is covered without editing the check.
+FILING_DEPENDENT_FLAGS = (
+    "pit_credits_at_filing",
+    "pit_investment_at_year_end",
+)
 
 
 class CentralGovernment(Agent):
@@ -178,6 +190,8 @@ class CentralGovernment(Agent):
 
         states["couple_rental_income_split"] = configuration.couple_rental_income_split
         states["pit_year_end_reconciliation"] = configuration.pit_year_end_reconciliation
+        states["pit_credits_at_filing"] = configuration.pit_credits_at_filing
+        states["pit_investment_at_year_end"] = configuration.pit_investment_at_year_end
 
         # Dividend integration params (flag defaults False for parity).
         states["pit_dividend_integration"] = configuration.pit_dividend_integration
@@ -298,6 +312,50 @@ class CentralGovernment(Agent):
         )[0]
         return unemployment_benefits.astype(float)
 
+    def _fall_back_if_deferred_work_cannot_land(self, progressive_active: bool) -> None:
+        """Disable deferral when no filing executes, instead of failing the run.
+
+        Tax functionality ships ON and turns off two ways: absent or incomplete
+        taxation data, or the user switching it off. **Both are FALLBACKS** --
+        they degrade to the legacy path with a warning, they do not raise. A
+        guard that refused here would turn an off-switch into a crash.
+
+        With no schedule the addon is inactive and these flags mean nothing: the
+        flat branch taxes investment income directly and grants no credits, so
+        nothing is stranded. The live case is a schedule present with
+        reconciliation off -- deferral would then drop the credits and leave
+        investment income untaxed, so the deferral is switched off and the
+        period reverts to crediting and withholding as it did before.
+
+        Warns once by construction: the flags are cleared, so a later period
+        finds nothing stranded ([[warn-once-rule]]).
+
+        Args:
+            progressive_active: Whether a progressive schedule is configured.
+        """
+        if not progressive_active:
+            return
+        if self.states.get("pit_year_end_reconciliation", False):
+            return
+
+        stranded = [
+            name for name in FILING_DEPENDENT_FLAGS if self.states.get(name, False)
+        ]
+        if not stranded:
+            return
+
+        for name in stranded:
+            self.states[name] = False
+        warnings.warn(
+            f"{', '.join(stranded)} defer work to the year-end filing, but "
+            f"pit_year_end_reconciliation is off so no filing runs. Falling back "
+            f"to the per-period behaviour for this run: credits are applied each "
+            f"period and the full base is withheld against. Switch reconciliation "
+            f"on to use the deferred path.",
+            TaxationDataWarning,
+            stacklevel=2,
+        )
+
     def compute_taxes(
         self,
         current_ind_employee_income: np.ndarray,
@@ -316,8 +374,9 @@ class CentralGovernment(Agent):
         # New tax-layer parameters are appended after every upstream parameter,
         # so a positional caller of the original signature still binds correctly.
         taxable_income_per_ind: np.ndarray | None = None,
-        credit_base_per_ind: np.ndarray | None = None,
-        direct_credits_per_ind: np.ndarray | None = None,
+        withheld_income_per_ind: np.ndarray | None = None,
+        nrtc_base_per_ind: np.ndarray | None = None,
+        nrtc_direct_per_ind: np.ndarray | None = None,
         annual_credit_base=None,
     ) -> None:
         """Calculate all tax revenues for the current period.
@@ -346,9 +405,12 @@ class CentralGovernment(Agent):
             current_household_new_real_wealth (np.ndarray): New wealth
             taxes_less_subsidies_rates (np.ndarray): Net tax rates
             current_total_exports (float): Total exports
+            withheld_income_per_ind (np.ndarray): The narrower pool the PERIOD
+                withholds against, employment only. None withholds against the
+                full base, which is the legacy behaviour.
             taxable_income_per_ind (np.ndarray): Pool A, the taxable income per
                 individual, assembled by the processing phase. Required.
-            credit_base_per_ind (np.ndarray): Pool B, the non-refundable credit
+            nrtc_base_per_ind (np.ndarray): Pool B, the non-refundable credit
                 base per individual, assembled by the processing phase. Required.
         """
         # Taxes on production
@@ -378,17 +440,27 @@ class CentralGovernment(Agent):
         # Total wages of employed individuals
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
+        # Government-owned, advanced once per period, so two taxes gated
+        # differently share one year boundary. Deliberately not advanced by the
+        # build-time pre-calibration, which calls ``compute_pit`` directly --
+        # that would shift every run's filing calendar by a step.
+        self.states["tax_step"] = int(self.states.get("tax_step", 0)) + 1
+
         # Personal income tax: progressive when a schedule is configured, else flat.
         pit_uppers = self.states.get("pit_uppers")
         pit_rates = self.states.get("pit_rates")
         settlement = 0.0  # only a filing on the progressive path makes this non-zero
+
+        self._fall_back_if_deferred_work_cannot_land(
+            pit_uppers is not None and pit_rates is not None
+        )
 
         if pit_uppers is not None and pit_rates is not None:
             # The pools are assembled by the processing phase, which alone holds
             # the household context and the dividend items. Assembling them here
             # instead would let a caller supply a grossed-up dividend without its
             # matching credit, over-taxing silently, so a missing pool raises.
-            if taxable_income_per_ind is None or credit_base_per_ind is None:
+            if taxable_income_per_ind is None or nrtc_base_per_ind is None:
                 raise ValueError(
                     "Progressive PIT requires both pools. Assemble them with "
                     "pit_pools.build_taxable_income_pool and "
@@ -398,22 +470,33 @@ class CentralGovernment(Agent):
             # The pools arrive annualized; the same factor apportions the tax back.
             factor = steps_per_year()
             tax_per_ind: list = []
+            # Only the WITHHOLDING narrows. The year's liability is still taken on
+            # the full base at the filing below, which is why the accumulator keeps
+            # receiving ``taxable_income_per_ind`` and not this.
+            withheld_pool = taxable_income_per_ind
+            if (
+                self.states.get("pit_investment_at_year_end", False)
+                and withheld_income_per_ind is not None
+            ):
+                withheld_pool = withheld_income_per_ind
             total_income_tax = self.compute_pit(
-                taxable_income_per_ind,
-                credit_base_per_ind,
-                direct_credits_per_ind,
+                withheld_pool,
+                nrtc_base_per_ind,
+                nrtc_direct_per_ind,
                 steps_per_year=factor,
                 out_tax_per_ind=tax_per_ind,
             )
             settlement = self._reconcile_tax_year(
                 taxable_income_per_ind,
                 tax_per_ind[0],
-                credit_base_per_ind,
-                direct_credits_per_ind,
+                nrtc_base_per_ind,
+                nrtc_direct_per_ind,
                 steps_per_year=factor,
                 annual_credit_base=annual_credit_base,
             )
-            total_income_tax += settlement
+            # Revenue is a scalar line, so the per-individual settlement collapses
+            # here rather than at source. np.sum also accepts the flat path's 0.0.
+            total_income_tax += float(np.sum(settlement))
         else:
             # Flat tax (backward-compatible path).
             total_income_tax = (
@@ -427,7 +510,7 @@ class CentralGovernment(Agent):
         # Recorded separately because it is netted into taxes_income above, where a
         # settlement worth a fraction of a percent of the year's liability is not
         # visible. Zero on the flat path and at every period that is not a filing.
-        self.ts.pit_year_end_settlement.append([settlement])
+        self.ts.pit_year_end_settlement.append([float(np.sum(settlement))])
 
         # Rental tax: a reporting figure (feeds GDP rent_received), already
         # inside taxes_income; the effective Income Tax rate on rent paid.
@@ -444,8 +527,8 @@ class CentralGovernment(Agent):
     def compute_pit(
         self,
         taxable_income_per_ind: np.ndarray,
-        credit_base_per_ind: np.ndarray | None = None,
-        direct_credits_per_ind: np.ndarray | None = None,
+        nrtc_base_per_ind: np.ndarray | None = None,
+        nrtc_direct_per_ind: np.ndarray | None = None,
         steps_per_year: float = 1.0,
         out_tax_per_ind: list | None = None,
     ) -> float:
@@ -459,9 +542,9 @@ class CentralGovernment(Agent):
 
         Args:
             taxable_income_per_ind: Pool A — taxable income per individual.
-            credit_base_per_ind: Pool B — summed non-refundable credit base per
+            nrtc_base_per_ind: Pool B — summed non-refundable credit base per
                 individual (``None`` or zeros when no credits apply).
-            direct_credits_per_ind: Direct dollar credits per individual (the
+            nrtc_direct_per_ind: Direct dollar credits per individual (the
                 dividend tax credit); ``None`` when not applicable.
             steps_per_year: Steps in a year when the pools were annualized; the
                 assessed annual tax is divided by it to give the period's revenue.
@@ -479,12 +562,17 @@ class CentralGovernment(Agent):
         )
 
         # Non-refundable credits, floored at zero (excess is lost, not refunded).
-        total_credit = np.zeros_like(pit_per_individual, dtype=float)
-        if credit_base_per_ind is not None:
-            total_credit = total_credit + credit_base_per_ind * float(pit_rates[0])
-        if direct_credits_per_ind is not None:
-            total_credit = total_credit + direct_credits_per_ind
-        pit_per_individual = np.maximum(0.0, pit_per_individual - total_credit)
+        # Skipped when the credits are deferred: the period withholds GROSS and
+        # the filing values them once, on the year's actual income. Averaging a
+        # credit across periods mis-states any that tapers. The arms still reach
+        # the filing, which accumulates them itself.
+        if not self.states.get("pit_credits_at_filing", False):
+            total_credit = np.zeros_like(pit_per_individual, dtype=float)
+            if nrtc_base_per_ind is not None:
+                total_credit = total_credit + nrtc_base_per_ind * float(pit_rates[0])
+            if nrtc_direct_per_ind is not None:
+                total_credit = total_credit + nrtc_direct_per_ind
+            pit_per_individual = np.maximum(0.0, pit_per_individual - total_credit)
 
         # Assessed against annual policy, so this is the annual liability.
         total_annual_tax = float(pit_per_individual.sum())
@@ -515,19 +603,22 @@ class CentralGovernment(Agent):
         self,
         annualized_income_per_ind: np.ndarray,
         tax_per_ind: np.ndarray,
-        credit_base_per_ind: np.ndarray | None,
-        direct_credits_per_ind: np.ndarray | None,
+        nrtc_base_per_ind: np.ndarray | None,
+        nrtc_direct_per_ind: np.ndarray | None,
         steps_per_year: float = 1.0,
         annual_credit_base=None,
-    ) -> float:
+    ) -> np.ndarray:
         """Settle the previous tax year and carry this period into the next.
 
         At the first period of a new year the liability on the year's actual
         income is compared with what was withheld, and the difference settles
         through the income-tax line at that filing: an over-payment is refunded
         and an under-payment collected, both at the same moment, as a filing has
-        one outcome. Returns the amount to add to this period's revenue, negative
-        for a refund. Off unless ``states["pit_year_end_reconciliation"]`` is set.
+        one outcome. Returns the settlement PER INDIVIDUAL, negative for a refund;
+        callers that need the period's revenue sum it themselves. The per-individual
+        shape is what lets the refundable credit reach the individuals who earned it
+        without a second allocation pass. Off unless
+        ``states["pit_year_end_reconciliation"]`` is set.
 
         Both halves are taken on the year's actual income: ``annual_credit_base``
         re-values the credits there, since a credit that tapers with income does
@@ -535,12 +626,12 @@ class CentralGovernment(Agent):
         stands in, and the settlement is approximate for those credits.
         """
         if not self.states.get("pit_year_end_reconciliation", False):
-            return 0.0
+            return np.zeros(len(annualized_income_per_ind))
 
         factor = steps_per_year
         n_ind = len(annualized_income_per_ind)
 
-        settlement = 0.0
+        settlement = np.zeros(n_ind)
 
         ytd_income = self.states.get("pit_ytd_income")
         if ytd_income is None or len(ytd_income) != n_ind:
@@ -554,14 +645,16 @@ class CentralGovernment(Agent):
             ytd_tax = np.zeros(n_ind)
             ytd_credit = np.zeros(n_ind)
             ytd_direct_credit = np.zeros(n_ind)
-            self.states["pit_step"] = 0
+            # The shared counter is NOT reset here: a household resize is a
+            # PIT-private event and would move another tax's filing calendar.
+            # PIT's own totals restart, so a resize settles a part year.
         else:
             ytd_tax = self.states["pit_ytd_tax"]
             ytd_credit = self.states["pit_ytd_credit"]
             ytd_direct_credit = self.states["pit_ytd_direct_credit"]
 
-        step = int(self.states.get("pit_step", 0)) + 1
-        self.states["pit_step"] = step
+        # Advanced by ``compute_taxes`` before this runs; read, never written.
+        step = int(self.states.get("tax_step", 0))
 
         # Step 1 is the first period of a calendar year. Settle before this
         # period is added, since it belongs to the new year.
@@ -588,8 +681,11 @@ class CentralGovernment(Agent):
                 annual_credit = ytd_direct_credit + annual_credit_base(
                     ytd_income, year_credits
                 ) * float(rates[0])
-            liability = float(np.maximum(0.0, annual_tax - annual_credit).sum())
-            withheld = float(ytd_tax.sum())
+            # Both stay PER INDIVIDUAL: the floor must apply per person, or a
+            # negative liability offsets a positive one and quietly reduces
+            # revenue. The caller sums.
+            liability = np.maximum(0.0, annual_tax - annual_credit)
+            withheld = ytd_tax
             # A filing has one outcome and one moment: the taxpayer either pays
             # what is owed or receives a refund, both at the filing. A refund
             # reduces the period's revenue, an amount owing adds to it.
@@ -600,13 +696,13 @@ class CentralGovernment(Agent):
             ytd_direct_credit = np.zeros(n_ind)
 
         period_credit = np.zeros(n_ind)
-        if credit_base_per_ind is not None:
-            period_credit = period_credit + credit_base_per_ind * float(
+        if nrtc_base_per_ind is not None:
+            period_credit = period_credit + nrtc_base_per_ind * float(
                 self.states["pit_rates"][0]
             )
         period_direct = np.zeros(n_ind)
-        if direct_credits_per_ind is not None:
-            period_direct = period_direct + direct_credits_per_ind
+        if nrtc_direct_per_ind is not None:
+            period_direct = period_direct + nrtc_direct_per_ind
 
         # The pool was scaled for assessment, so the year's income is the sum of
         # the unscaled periods. The credit mean is exact for a direct credit and a

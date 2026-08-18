@@ -64,6 +64,16 @@ class PitContext:
 # annualized at its source so its credit scales with it exactly once.
 PIT_INCOME_STREAMS = frozenset({"employee_income", "rental_income", "financial_income"})
 
+# Every stream ``build_taxable_income_pool`` sums. Deliberately NOT the same set
+# as the one above: membership here means the pooled divide-by-factor applies to
+# the stream, so it must be scaled up somewhere or it is understated.
+_POOLED_STREAMS = (
+    "employee_income",
+    "rental_income",
+    "financial_income",
+    "grossed_up_dividend",
+)
+
 
 def annualize_pit_context(
     ctx: PitContext,
@@ -171,6 +181,64 @@ def build_dividend_tax_items(
         + non_eligible_dtc_rate * grossed_non_eligible
     )
     return grossed_up_dividend, dividend_tax_credit
+
+
+def build_withheld_income_pool(ctx: PitContext) -> np.ndarray:
+    """The pool the PERIOD withholds against: employment income only.
+
+    The split narrows what is withheld, not what is assessed. The year's
+    liability is still taken on the full base -- ``build_taxable_income_pool``
+    -- at the filing; only the per-period withholding stops reaching income
+    that no one is paid on a quarterly schedule.
+
+    Employment is net of the employee social-insurance levy, exactly as in the
+    full pool, so the two agree on the one stream they share.
+
+    Args:
+        ctx: The annualized PIT context.
+
+    Returns:
+        Withheld-against income per individual.
+    """
+    return ctx.employee_income * (1.0 - ctx.employee_si_rate)
+
+
+def assert_pooled_streams_are_scaled(ctx: PitContext, streams=PIT_INCOME_STREAMS) -> None:
+    """Every stream in the taxable pool must be scaled by F somewhere.
+
+    W1, and it guards a trap rather than a style: ``annualize_pit_context``
+    scales PER STREAM while the scale-down at ``central_government.py`` divides
+    the WHOLE pooled array by the same factor. A stream that sits in the pool
+    but in no scaling site is therefore divided and never multiplied --
+    understated by a factor of F, silently.
+
+    The invariant is *pool membership implies a scaling site*, NOT *membership
+    of ``PIT_INCOME_STREAMS``*: the grossed-up dividend is outside the frozenset
+    and correct, because it is scaled at its source.
+
+    Args:
+        ctx: The PIT context whose populated streams are checked.
+        streams: Names ``annualize_pit_context`` scales.
+
+    Raises:
+        ValueError: If a populated pooled stream is scaled nowhere.
+    """
+    scaled_elsewhere = {"employee_income", "grossed_up_dividend"}
+    unscaled = [
+        name
+        for name in _POOLED_STREAMS
+        if getattr(ctx, name, None) is not None
+        and name not in streams
+        and name not in scaled_elsewhere
+    ]
+    if unscaled:
+        raise ValueError(
+            f"{', '.join(unscaled)} are summed into the taxable pool but are "
+            f"scaled by no annualization site, so the pooled divide-by-factor "
+            f"understates them {int(1)}-for-F. Either add them to the scaling "
+            f"set or drop them from build_taxable_income_pool -- doing only one "
+            f"is the defect."
+        )
 
 
 def build_credit_base_pool(

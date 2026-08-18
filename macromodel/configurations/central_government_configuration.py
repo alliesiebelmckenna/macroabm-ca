@@ -134,6 +134,25 @@ class CentralGovernmentConfiguration(BaseModel):
         "which leaves a taxpayer whose income varied having paid the wrong amount.",
     )
 
+    pit_credits_at_filing: bool = Field(
+        default=True,
+        description="Withhold GROSS each period and apply the non-refundable and "
+        "dividend credits once, at the year-end filing, on the year's actual "
+        "income. False keeps the legacy behaviour of netting an averaged credit "
+        "off every period, which mis-states any credit that tapers with income. "
+        "Requires a filing to actually execute: progressive PIT active AND "
+        "pit_year_end_reconciliation on, or the credits are granted nowhere.",
+    )
+
+    pit_investment_at_year_end: bool = Field(
+        default=True,
+        description="Withhold on EMPLOYMENT income only each period and assess "
+        "rental, financial and dividend income once, at the year-end filing. "
+        "Mirrors how these are actually taxed: nobody is paid investment income "
+        "on a withholding schedule. False withholds against the full base every "
+        "period, the legacy behaviour. Requires a filing to actually execute.",
+    )
+
     couple_rental_income_split: float = Field(
         default=0.5,
         ge=0.0,

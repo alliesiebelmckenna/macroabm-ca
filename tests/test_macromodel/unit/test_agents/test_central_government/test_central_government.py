@@ -98,7 +98,7 @@ class TestCentralGovernmentPIT:
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
             taxable_income_per_ind=taxable,
-            credit_base_per_ind=credits,
+            nrtc_base_per_ind=credits,
         )
 
         # Recompute the expected effective rate from the tax paid
@@ -196,8 +196,17 @@ class TestCentralGovernmentPIT:
     def test_tax_credits_floor_at_zero(
         self, test_central_government_pit_full,
     ):
-        """Tax credit is non-refundable: tax floored at 0."""
+        """Tax credit is non-refundable: tax floored at 0, PER PERIOD.
+
+        Pinned to the legacy path deliberately. ``pit_credits_at_filing``
+        defaults on, which withholds gross and moves this floor to the filing --
+        so without the pin this test would read as broken while the code was
+        behaving as designed. The legacy path is still supported and an
+        unexercised branch rots, so it keeps its own proof; the deferred-path
+        companion lives in the extra-depth mirror.
+        """
         cg = test_central_government_pit_full
+        cg.states["pit_credits_at_filing"] = False
 
         emp_income = np.array([5000.0])
         activity = np.array([ActivityStatus.EMPLOYED])
@@ -218,7 +227,7 @@ class TestCentralGovernmentPIT:
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
             taxable_income_per_ind=taxable,
-            credit_base_per_ind=credits,
+            nrtc_base_per_ind=credits,
         )
 
         last_tax = cg.ts.get_aggregate("taxes_income")[-1]
