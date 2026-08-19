@@ -23,8 +23,7 @@ from macro_data.readers.taxation.personal_income_tax.rtc_schedule import (
     RefundableSchedule,
 )
 
-# Default schedule filenames; jurisdictions live in the jurisdiction column. They are
-# defaults, not requirements: point SchedulePaths at any files with this schema.
+# Default filenames only; point SchedulePaths at any files with this schema.
 RATES_THRESHOLDS_FILENAME = "rates_thresholds.csv"
 TAX_CREDITS_FILENAME = "non_refundable_tax_credits.csv"
 DIVIDEND_FILENAME = "dividend_tax_credit_schedule.csv"
@@ -105,8 +104,7 @@ class TaxationReader:
     pit_schedule: PITSchedule
     dividend_schedule: Optional[DividendTaxCreditSchedule]
     jurisdiction: str
-    # Additive and defaulted, so an existing construction keeps working and a
-    # jurisdiction without refundable rows needs no change at its call site.
+    # Additive and defaulted, so an existing construction keeps working.
     refundable_schedule: Optional[RefundableSchedule] = None
 
     @classmethod
@@ -136,10 +134,7 @@ class TaxationReader:
             try:
                 dividend_schedule = DividendTaxCreditSchedule.from_csv(paths.dividend, jurisdiction=jurisdiction)
             except ValueError:
-                # The file carries no rows for this jurisdiction: it taxes
-                # dividends at the ordinary rates, with no gross-up / DTC path.
-                # A normal state for a jurisdiction whose dividend rates are not
-                # yet sourced, not an error.
+                # No rows for this jurisdiction: dividends are taxed at ordinary rates. A normal state, not an error.
                 dividend_schedule = None
 
         refundable_schedule: Optional[RefundableSchedule] = None
@@ -148,8 +143,6 @@ class TaxationReader:
                 refundable_schedule = RefundableSchedule.from_csv(paths.refundable, jurisdiction=jurisdiction)
             except ValueError:
                 # No rows for this jurisdiction: it grants no refundable credit.
-                # Normal for a jurisdiction whose refundable credits are not
-                # sourced, and the same posture the dividend schedule takes.
                 refundable_schedule = None
 
         return cls(

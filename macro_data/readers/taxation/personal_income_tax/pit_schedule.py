@@ -50,7 +50,7 @@ _REQUIRED_COLS = {
     "jurisdiction",  # jurisdiction key (e.g. "BC")
     "lower",  # nominal lower income threshold
     "rate",  # corresponding marginal tax rate
-    "index",  # whether tax brackets grow with inflation over time (1) or stay the same (0)
+    "index",  # schema check only: required for shape, no longer read
 }
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,6 @@ class PITSchedule:
         df["year"] = df["year"].astype(int)
         for col in ("lower", "rate"):
             df[col] = df[col].astype(float)
-        df["index"] = df["index"].astype(bool)
 
         return cls(df)
 
@@ -215,8 +214,7 @@ def compute_personal_income_tax(
     Returns:
         array of individual-level income tax payable amounts
     """
-    # Fail fast on malformed brackets before computing: equal-length arrays,
-    # strictly increasing upper bounds, and rates within [0, 1].
+    # Fail fast on malformed brackets: equal lengths, increasing uppers, rates in [0, 1].
     _validate_brackets(uppers, rates)
 
     tax = np.zeros_like(incomes, dtype=float)
@@ -237,9 +235,7 @@ def _validate_brackets(uppers: np.ndarray, rates: np.ndarray) -> None:
     """
     if len(uppers) != len(rates):
         raise ValueError(f"uppers and rates must have the same length, got {len(uppers)} and {len(rates)}")
-    # NaN is invisible to every comparison below: it is neither < 0 nor > 1,
-    # and np.diff on a single bracket is not checked at all, so a NaN would
-    # validate cleanly and then produce NaN tax for the whole population.
+    # NaN passes every comparison below, so it would validate and then poison the population.
     if np.isnan(np.asarray(uppers, dtype=float)).any() or np.isnan(np.asarray(rates, dtype=float)).any():
         raise ValueError("bracket thresholds and rates must not be NaN")
     if len(uppers) > 1 and not np.all(np.diff(uppers) > 0):

@@ -107,10 +107,7 @@ def _scale_pit_policy(config: CentralGovernmentConfiguration, scale: int) -> Cen
         updates["pit_non_refundable_tax_credits"] = [
             _scaled_tax_credit(credit, scale) for credit in config.pit_non_refundable_tax_credits
         ]
-    # W5. Per-person statutory dollars, like the non-refundable ones, so they
-    # need the same conversion. The fail-closed unit declaration does NOT cover
-    # them -- it guards config FIELDS, and these arrive as schedule rows, so
-    # nothing would raise and every amount would be wrong by the scale factor.
+    # Per-person dollars like the non-refundable ones; the field-level unit guard does not reach schedule rows.
     if config.pit_refundable_tax_credits is not None:
         updates["pit_refundable_tax_credits"] = [
             _scaled_tax_credit(credit, scale) for credit in config.pit_refundable_tax_credits
@@ -166,8 +163,7 @@ def _build_pit_schedule_by_year(
             fragment["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                 config_year.pit_non_refundable_tax_credits
             )
-        # These move every published year, so omitting them would freeze the
-        # credit at the construction year for the whole run.
+        # These move every published year; omitting them freezes the credit at the construction year.
         if config_year.pit_refundable_tax_credits is not None:
             fragment["pit_refundable_tax_credits"] = pit_refundable_defs_to_state_dicts(
                 config_year.pit_refundable_tax_credits
@@ -466,8 +462,7 @@ class Country:
 
         n_unemployed = (individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED).sum()
 
-        # Layer the progressive PIT schedule onto the config when opted in, then
-        # scale its policy dollars to agent units.
+        # Layer the progressive schedule on when opted in, then scale its dollars to agent units.
         central_government_config = activate_taxation(
             base_config=country_configuration.central_government,
             taxation_reader=synthetic_country.taxation,
@@ -495,8 +490,7 @@ class Country:
         if pit_schedule_by_year:
             central_government.states["pit_schedule_by_year"] = pit_schedule_by_year
 
-        # Pre-calibrate states["Income Tax"] to the schedule-implied effective
-        # rate so the first period carries no t=0 calibration shock.
+        # Pre-calibrate the effective rate so the first period carries no t=0 shock.
         pit_uppers = central_government.states.get("pit_uppers")
         pit_rates = central_government.states.get("pit_rates")
         if pit_uppers is not None and pit_rates is not None:
@@ -520,13 +514,7 @@ class Country:
             )
             _precalibrate_income_tax(central_government, taxable_pool, credit_pool, country_name)
 
-        # Both the schedule table and the effective rate compute_pit just set
-        # were written after ``Agent.__init__`` snapshotted ``initial_states``,
-        # so ``reset()`` would restore a government with neither: the pre-hook
-        # would find no table and hold the construction year's brackets for the
-        # whole run, and the rate would revert to the flat one this block exists
-        # to replace. Fold them into the snapshot so a reset run is the same
-        # model as a fresh one.
+        # Written after Agent.__init__ snapshotted initial_states, so fold them in or reset() loses both.
         for key in ("pit_schedule_by_year", "Income Tax"):
             if key in central_government.states:
                 central_government.initial_states[key] = deepcopy(central_government.states[key])
@@ -916,8 +904,7 @@ class Country:
                 corr_households=self.individuals.states["Corresponding Household ID"],
             )
         )
-        # Expected leg, same reasoning: realised-only would have households
-        # never anticipating money they do receive.
+        # Expected leg: realised-only would have households never anticipating money they do receive.
         self.households.ts.expected_income_social_transfers.append(
             self._rtc_per_household()
             + self.households.compute_expected_social_transfer_income(
@@ -1471,11 +1458,7 @@ class Country:
             )
         )
         self.households.ts.total_income_employee.append([self.households.ts.current("income_employee").sum()])
-        # The credit rides the transfer WIRING but not its ALLOCATION: it is
-        # added after the regression has split the benefit budget, so it reaches
-        # the households entitled to it rather than being spread by a fitted
-        # share. Adding it to this series also books the expenditure, since
-        # `compute_deficit` consumes exactly this series.
+        # Rides the transfer wiring but not its allocation, so it reaches the entitled households; this series also books the expenditure.
         self.households.ts.income_social_transfers.append(
             self._rtc_per_household()
             + self.households.compute_social_transfer_income(
@@ -1610,8 +1593,7 @@ class Country:
             individuals_age=ind_ages,
         )
 
-        # Dividend integration (off by default): gross up firm and bank dividends
-        # for the taxable pool and build the dividend tax credits.
+        # Dividend integration (off by default): gross up the dividends and build their credits.
         grossed_up_dividend_per_ind = None
         dividend_tax_credit_per_ind = None
         if self.central_government.states.get("pit_dividend_integration", False):
@@ -1663,10 +1645,7 @@ class Country:
         )
         # The grossed-up dividend is already annual; scale the raw streams.
         pit_ctx = annualize_pit_context(pit_ctx, steps_per_year())
-        # W1: fail closed if a pooled stream is scaled nowhere. The scale-up is
-        # per stream and the scale-down is on the whole pooled array, so a stream
-        # dropped from the scaling set but left in the pool is understated by the
-        # annualization factor without anything raising.
+        # Fail closed if a pooled stream is scaled nowhere, which would understate it by the factor.
         assert_pooled_streams_are_scaled(pit_ctx)
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
         withheld_income_per_ind = build_withheld_income_pool(pit_ctx)

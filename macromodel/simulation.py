@@ -132,9 +132,7 @@ class Simulation:
             exchange_rates_model=model_dict,
         )
 
-        # Before the countries are built: the PIT pre-calibration runs during
-        # construction and reads this factor, so setting it later would assess the
-        # opening tax rate on the default step length instead of the configured one.
+        # Before the countries are built: the PIT pre-calibration reads this factor during construction.
         set_steps_per_year(datawrapper.time_unit)
 
         countries = {
@@ -205,12 +203,10 @@ class Simulation:
             else None
         )
 
-        # Register the PIT schedule-update pre-hook when any government carries a
-        # per-year PIT schedule table; the hook self-gates per government.
+        # Register the pre-hook when any government carries a per-year table; it self-gates.
         prehooks: list[Callable] = []
         if any("pit_schedule_by_year" in country.central_government.states for country in countries.values()):
-            # Local import avoids a circular dependency (the hook module imports
-            # Simulation).
+            # Local import avoids a circular dependency.
             from macromodel.utils.prehooks.pit_schedule_update import (
                 create_pit_schedule_update_hook,
             )
@@ -243,8 +239,7 @@ class Simulation:
         if configuration is None:
             configuration = self.configuration
 
-        # Preserve the step length across a reset; omitting the increment here
-        # silently reverted the clock to one month per step.
+        # Preserve the step length across a reset; omitting it reverted the clock to one month.
         self.timestep = Timestep(year=self.initial_year, month=1, increment=self.timestep.increment)
 
         self.rest_of_the_world.reset(configuration.row_configuration)

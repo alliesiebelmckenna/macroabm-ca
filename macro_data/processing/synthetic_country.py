@@ -193,8 +193,7 @@ class SyntheticCountry:
     firm_exo_prices: Optional[SectorExoPrices] = None
     emission_factors_ch4: Optional[CH4EmissionsDataCAN] = None
     historical_emissions_df: Optional[pd.DataFrame] = None
-    # Personal-income-tax schedules carried across the pickle boundary for the
-    # macromodel layer to build the PIT config; None when no taxation data.
+    # PIT schedules carried across the pickle boundary; None when no taxation data.
     taxation: Optional[TaxationReader] = None
 
     @classmethod

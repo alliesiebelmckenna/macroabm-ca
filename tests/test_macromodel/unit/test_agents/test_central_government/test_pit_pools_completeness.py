@@ -1,4 +1,4 @@
-"""W1 — every stream in the taxable pool must be scaled by the annualization.
+"""Every stream in the taxable pool must be scaled by the annualization.
 
 The scale-up is PER STREAM and the scale-down divides the WHOLE pooled array by
 the same factor, so a stream that sits in the pool but in no scaling site is

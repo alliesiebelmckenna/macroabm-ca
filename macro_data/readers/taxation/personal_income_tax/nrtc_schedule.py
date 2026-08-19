@@ -31,13 +31,7 @@ _TC_REQUIRED_COLS = {
 }
 
 
-# Maps each credit to a dict of eligibility rules; an individual is
-# eligible when all rules in the dict are satisfied. Expand as credits activate.
-#
-# Only credits the runtime can express are registered. A credit published in the
-# schedule but absent here is unmapped: the builder drops it and the runtime
-# credit pool contributes zero, so an unexpressible credit is never granted
-# universally. Register a credit here only together with its runtime branch.
+# Eligibility rules per credit; an unregistered credit is unmapped and contributes zero. Register one only with its runtime branch.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
     "Personal Amount": {},  # universal
     "Age Amount": {"age_min": 65},
@@ -125,8 +119,7 @@ class NRTCSchedule:
         if df.empty:
             raise ValueError(f"Tax-credit CSV {path} does not contain any rows for jurisdiction {juris}")
 
-        # Minimum year, not the first row's, so an unsorted CSV does not shift
-        # the base credit set.
+        # Minimum year, not the first row's, so an unsorted CSV does not shift the base set.
         start_year = int(df["year"].min())
 
         # Build a component per row, grouped by year for statutory lookup.
@@ -141,8 +134,7 @@ class NRTCSchedule:
                 continue
 
             amount = float(str(raw_amount).replace(",", ""))
-            # Keep $0 credits: they carry the eligibility wiring with no
-            # revenue impact by default.
+            # Keep $0 credits: they carry the eligibility wiring.
 
             # Parse optional clawback fields (spousal / dependent income tests).
             clawback: Optional[float] = None
@@ -158,8 +150,7 @@ class NRTCSchedule:
             # Look up eligibility rules
             eligibility = _ELIGIBILITY_RULES.get(credit)
             if eligibility is None:
-                # Unknown credit: mark it non-expressible so the config builder
-                # skips it rather than granting it to everyone.
+                # Unknown credit: mark non-expressible so the builder skips it.
                 eligibility = {"_deferred_unmapped": True}
 
             credits_by_year.setdefault(int(row["year"]), []).append(

@@ -22,8 +22,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Credits granted to everyone; the fail-closed dispatch in _credit_amount
-# gives any unmapped credit zero rather than granting it to everyone.
+# Universal credits; anything unmapped falls closed to zero in _credit_amount.
 _UNIVERSAL_CREDIT_KINDS = frozenset({"Personal Amount"})
 
 # Unmapped credits already warned about (warn once, not once per step).
@@ -50,35 +49,26 @@ class PitContext:
     employee_si_rate: float
     rental_income: np.ndarray | None = None
     financial_income: np.ndarray | None = None
-    # Grossed-up firm dividend: a tax fiction for taxable income and the DTC
-    # (the dividend received is unchanged). None when integration is off.
+    # None when dividend integration is off.
     grossed_up_dividend: np.ndarray | None = None
 
     # household / demographic context (tax-credit eligibility)
     individuals_age: np.ndarray | None = None
     individuals_corr_households: np.ndarray | None = None
     households_type: np.ndarray | None = None
-    # Housing tenure per HOUSEHOLD, HFCS codes (1 own outright, 2 own part,
-    # 3 rented/sublet, 4 free use), with -1 for social housing. Needed by the
-    # renter's credit and by nothing else so far.
+    # Housing tenure per household, HFCS codes.
     households_tenure: np.ndarray | None = None
 
 
-# Raw income streams the annualization scales; the grossed-up dividend is
-# annualized at its source so its credit scales with it exactly once.
+# Streams the annualization scales; the dividend is scaled at its source.
 PIT_INCOME_STREAMS = frozenset({"employee_income", "rental_income", "financial_income"})
 
-# Refundable-credit boundaries. The dependant age is UNDER 19 (s.8.1(2) imports
-# the federal definition); the non-refundable equivalent-to-spouse credit uses
-# under 18, from a different provision, and the divergence is correct.
 _QUALIFIED_DEPENDANT_AGE = 19
 _ADULT_AGE = 19
 # HFCS tenure: 3 rented/sublet. Social housing is -1 and deliberately excluded.
 _RENTING_TENURE_CODES = (3,)
 
-# Every stream ``build_taxable_income_pool`` sums. Deliberately NOT the same set
-# as the one above: membership here means the pooled divide-by-factor applies to
-# the stream, so it must be scaled up somewhere or it is understated.
+# Streams the pool sums; each must be scaled somewhere or it is understated.
 _POOLED_STREAMS = (
     "employee_income",
     "rental_income",
@@ -127,7 +117,6 @@ def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
     Returns:
         Taxable income per individual.
     """
-    # Employee wages are taxed net of the employee social-insurance levy.
     pool = ctx.employee_income * (1.0 - ctx.employee_si_rate)
 
     if ctx.rental_income is not None:
@@ -135,15 +124,10 @@ def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
     if ctx.financial_income is not None:
         pool = pool + ctx.financial_income
     if ctx.grossed_up_dividend is not None:
-        # Grossed-up dividend (CRA line 12000): notional, so the household
-        # receives only the un-grossed cash.
         pool = pool + ctx.grossed_up_dividend
 
-    # pool = pool + ctx.pension_income            # ← example: new stream
-    # pool = pool + ctx.capital_gains * 0.5       # ← example: inclusion rate
 
-    # Social transfers are deliberately outside the taxable pool; they are not
-    # a missing stream.
+    # Social transfers are deliberately outside the taxable pool.
 
     return pool
 
@@ -211,7 +195,7 @@ def build_withheld_income_pool(ctx: PitContext) -> np.ndarray:
 def assert_pooled_streams_are_scaled(ctx: PitContext, streams=PIT_INCOME_STREAMS) -> None:
     """Every stream in the taxable pool must be scaled by F somewhere.
 
-    W1, and it guards a trap rather than a style: ``annualize_pit_context``
+    It guards a trap rather than a style: ``annualize_pit_context``
     scales PER STREAM while the scale-down at ``central_government.py`` divides
     the WHOLE pooled array by the same factor. A stream that sits in the pool
     but in no scaling site is therefore divided and never multiplied --
@@ -284,20 +268,9 @@ def build_refundable_credit_pools(
 
     household = _household_context(n_ind, annual_income_per_ind, ctx)
 
-    # ⚠ The taper is means-tested on HOUSEHOLD income, not the claimant's own.
-    # The whole entitlement lands on one person, so tapering it against that
-    # person's income alone would test a two-earner family on roughly half its
-    # income and overpay it. Mapped back to each individual so the arithmetic
-    # below stays per-individual throughout.
+    # Means-tested on HOUSEHOLD income, mapped back per individual.
     means_income = _household_income_per_ind(annual_income_per_ind, ctx, n_ind)
-    # Sum the components of each instrument BEFORE tapering, keeping each
-    # instrument's delivery and taper with it.
-    #
-    # ⚠ The threshold belongs to the HOUSEHOLD, not to a component row. The
-    # climate rows publish two -- single on the individual row, family on the
-    # spouse and dependant rows -- so a household is tapered on whichever its
-    # own components reach. Taking one row's figure for the whole instrument
-    # would taper a family from the single threshold.
+    # Sum each instrument's components before tapering; the threshold is the household's.
     by_instrument: dict[str, dict] = {}
     for d in credit_defs:
         key = str(d.get("credit_name", d.get("credit", "")))
@@ -359,8 +332,7 @@ def _tapered(
     """
     if clawback is None or clawback_rate is None:
         return np.maximum(0.0, gross)
-    # `clawback` is PER INDIVIDUAL: the threshold a household reaches depends on
-    # which components it draws, so it cannot be one number for the instrument.
+    # Per individual: the threshold depends on which components the household draws.
     excess = np.maximum(0.0, income - np.asarray(clawback, dtype=float))
     return np.maximum(0.0, gross - float(clawback_rate) * excess)
 
@@ -374,7 +346,7 @@ def _refundable_component(
 ) -> np.ndarray:
     """One component's UNTAPERED value, placed on the household's claimant.
 
-    **Every component is a HOUSEHOLD entitlement paid to ONE person.** A family
+    Every component is a HOUSEHOLD entitlement paid to ONE person. A family
     receives the individual amount once, a spouse amount once, and one amount
     per child -- not the individual amount per adult, nor the spouse amount to
     everyone in a couple. Granting per member overpays a couple twofold and
@@ -406,8 +378,7 @@ def _refundable_component(
         age_min = tc.get("eligibility_age_min")
         if age_min is None:
             return zeros
-        # One per household that HAS a qualifying adult; the claimant is one by
-        # construction, so its presence is the test.
+        # The claimant is a qualifying adult by construction.
         for _i, h in claimant.items():
             per_hh[h] = amount
 
@@ -480,27 +451,14 @@ def _eldest_adult_index(
 ) -> dict[int, int]:
     """Map each household's claimant to that household.
 
-    **Eligibility has THREE limbs, not one.** BC grants the credit to a person
-    who is 19 or older, OR has a spouse or common-law partner, OR is a parent
-    residing with their child. Gating on age alone excludes an under-19 parent
-    or spouse, who is eligible.
-
-    **One claimant per household regardless of which limb qualifies them** --
-    "only one person can receive the credit on behalf of a family" -- so adding
-    the limbs widens who may claim without ever paying a family twice. The
-    claimant is the household's eldest qualifying member.
-
-    The parent limb is inferred, since the model carries no parent linkage: a
-    member with a younger minor in the same household is treated as that
-    child's parent. Measured empty on the current population (investigation
-    I3), so the limbs beyond age change no figure today.
-
-    Args:
-        ages: Age per individual.
-        hh_of_ind: Household index per individual.
-        n_ind: Number of individuals.
-        household: Couple / single-parent flags, for the spouse limb. Without
-            it only the age and parent limbs apply.
+    Eligibility has three limbs: 19 or older, OR having a spouse or common-law
+    partner, OR being a parent residing with their child — so gating on age alone
+    would wrongly exclude an under-19 parent or spouse. Only one person may claim
+    on behalf of a family, so the limbs widen who may claim without ever paying a
+    household twice; the claimant is its eldest qualifying member. The parent limb
+    is inferred, the model carrying no parent linkage: a member with a younger
+    minor in the same household is treated as that child's parent. Measured empty
+    on the current population, so the limbs beyond age change no figure today.
 
     Returns:
         ``{individual index: household index}``, one entry per household that
@@ -606,39 +564,31 @@ def _household_context(
 
     hh_of_ind = np.asarray(corr).astype(int)
     hh_type_of_ind = np.array(
-        # Bounded on both sides: a negative sentinel (an unassigned household)
-        # is a legal numpy index and would otherwise borrow the last household.
+        # Bounded both sides: a negative sentinel is a legal numpy index.
         [hh_type[h] if 0 <= h < len(hh_type) else None for h in hh_of_ind]
     )
 
     in_couple = np.array([t in couple_types for t in hh_type_of_ind])
     is_single_parent = np.array([t in single_parent_types for t in hh_type_of_ind])
 
-    # Spouse income is the other spouse's taxable base in a couple household,
-    # inf elsewhere. Pairing is over adults (age >= 18) only, since the
-    # individual array includes children.
+    # The other spouse's taxable base in a couple, inf elsewhere; pairing is adults-only.
     spouse_income = np.full(n_ind, np.inf)
 
     ages = ctx.individuals_age
     if ages is not None:
         adult_idx = np.where(np.asarray(ages) >= 18)[0]
     else:
-        # Without ages we cannot single out adults; fall back to all members
-        # (correct for childless couples, the only 2-member couple case).
+        # Without ages, fall back to all members.
         adult_idx = np.arange(n_ind)
 
     adult_hh = hh_of_ind[adult_idx]
     if ages is not None:
-        # Eldest first within each household, so the two spouses sort ahead of
-        # any resident adult child. Age is the available proxy: the model
-        # records no spousal link.
+        # Eldest first, so spouses sort ahead of a resident adult child.
         order = np.lexsort((-np.asarray(ages)[adult_idx], adult_hh))
-        # A third adult is a resident adult child. Tax is assessed per person,
-        # so their presence must not disturb the couple's own credits.
+        # A third adult is a resident adult child.
         allow_extra_adults = True
     else:
-        # Without ages, adults cannot be told from children, so an extra member
-        # is indistinguishable from a spouse; pair only unambiguous couples.
+        # Without ages an extra member is indistinguishable from a spouse.
         order = np.argsort(adult_hh, kind="stable")
         allow_extra_adults = False
 
@@ -649,8 +599,7 @@ def _household_context(
     first = sorted_idx[group_start[pair_groups]]
     second = sorted_idx[group_start[pair_groups] + 1]
 
-    # Keep only couple-type households.  in_couple already encodes both the
-    # type membership and the id bounds check, and both adults share it.
+    # Couple-type households only; in_couple encodes both type and bounds.
     is_couple_pair = in_couple[first]
     first = first[is_couple_pair]
     second = second[is_couple_pair]
@@ -763,10 +712,7 @@ def _credit_amount(
             # No phaseout published: a genuinely unphased age credit.
             return np.where(eligible, amount, 0.0)
         if cs is None or cc is None or cc <= cs:
-            # A half-published phaseout is a data error, not an unphased credit.
-            # Falling back to the full amount here would over-credit every
-            # eligible filer above the threshold, silently and by the whole
-            # taper, so it fails loudly instead.
+            # A half-published phaseout is a data error; fail loudly rather than over-credit.
             raise ValueError(
                 f"Age Amount publishes an incomplete phaseout (clawback={cs}, "
                 f"top={cc}). Both are required, and top must exceed clawback."
@@ -775,8 +721,7 @@ def _credit_amount(
         excess = np.maximum(0.0, taxable_income_per_ind - cs)
         return np.where(eligible, np.maximum(0.0, amount - clawback_rate * excess), 0.0)
 
-    # Spousal Amount: the base less the spouse's income above the published
-    # exemption. spouse_income is inf for non-couples so they clamp to zero.
+    # spouse_income is inf for non-couples, so they clamp to zero.
     if credit == "Spousal Amount":
         if household.in_couple is None or household.spouse_income is None:
             return zeros
@@ -784,11 +729,7 @@ def _credit_amount(
         excess = np.maximum(0.0, household.spouse_income - exemption)
         return np.maximum(0.0, amount - excess)
 
-    # Equivalent To Spouse Amount: one claim per single-parent household
-    # supporting a minor child, taken by the parent. The exception for a dependant
-    # aged 18 or over with an infirmity is not expressed, because the
-    # model carries no infirmity signal; a household whose children have all
-    # reached 18 is therefore treated as ineligible rather than granted it.
+    # One claim per single-parent household; the infirmity exception is not modelled.
     if credit == "Equivalent To Spouse Amount":
         corr = ctx.individuals_corr_households
         if household.is_single_parent is None or ages is None or corr is None:
@@ -814,8 +755,7 @@ def _credit_amount(
     if credit in _UNIVERSAL_CREDIT_KINDS:
         return np.full(n_ind, float(amount))
 
-    # Unknown credit: fail closed, contributing zero rather than granting the
-    # amount to everyone.
+    # Fail closed: contribute zero rather than grant the amount to everyone.
     if credit not in _UNMAPPED_KINDS_WARNED:
         _UNMAPPED_KINDS_WARNED.add(credit)
         logger.warning(

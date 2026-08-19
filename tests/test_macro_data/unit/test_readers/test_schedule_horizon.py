@@ -27,21 +27,7 @@ HORIZON = 2030
 #   parents[0]=test_readers [1]=unit [2]=test_macro_data [3]=tests [4]=repo root
 _COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
-# --- Deferred gaps -----------------------------------------------------------
-# Federal coverage is ON HOLD until the federal layer is designed and built
-# (user, 2026-08-14).  Recorded here rather than by loosening the assertions,
-# because a waived gap must stay VISIBLE and must name what voids it.
-#
-# The federal out-years were lost rather than never sourced: the 2026-07-13
-# rebuild deleted `rates_thresholds_federal_freeze.csv`, which held exactly the
-# CA 2027-2030 delta, and folded CA only into the UNTRACKED comprehensive file
-# the readers do not read by default.
-#
-# TRIGGER TO REMOVE: the federal layer build.  Nothing else.
-#
-# This mapping is asserted to be EXACT, so it cannot rot: a new gap fails the
-# test, and so does a gap that has been fixed -- which is the signal to delete
-# its entry here rather than leave a waiver standing over healthy data.
+# Known coverage gaps, asserted EXACT: a new gap fails, and so does a closed one.
 _DEFERRED_GAPS: dict[tuple[str, str], int] = {
     ("rates_thresholds", "CA"): 2026,  # federal statute itself ends 2026
 }
@@ -137,8 +123,7 @@ def test_deferred_gaps_are_exactly_as_recorded() -> None:
 
     Fails in BOTH directions on purpose.  An unrecorded gap means something
     regressed; a recorded gap that no longer exists means the waiver is now
-    standing over healthy data and must be deleted.  A waiver nobody revisits is
-    how the federal hole survived from 2026-07-13 to 2026-08-14 unnoticed.
+    standing over healthy data and must be deleted.
     """
     actual = {
         (path.stem, str(geo)): int(last)

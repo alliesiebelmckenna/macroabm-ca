@@ -156,7 +156,7 @@ class TestDeliverySplit:
 
 
 class TestScalingToAgentUnits:
-    """W5. The amounts are per-person statutory dollars; agents are not people."""
+    """The amounts are per-person statutory dollars; agents are not people."""
 
     def test_currency_fields_scale_and_rates_do_not(self):
         from macromodel.configurations.central_government_configuration import (

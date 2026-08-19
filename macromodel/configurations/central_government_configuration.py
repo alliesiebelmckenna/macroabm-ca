@@ -3,10 +3,7 @@ from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, Field
 
-# Unit declarations for tax-policy fields, read by ``country._scale_pit_policy``
-# to scale per-person statutory dollars to agent units. Only "currency" is
-# scaled; "dimensionless" and "years" are not. ``monetary_field_names`` enforces
-# this fail-closed, so a new numeric field must declare its unit.
+# Unit declarations read by country._scale_pit_policy; only currency is scaled.
 CURRENCY = {"unit": "currency"}
 DIMENSIONLESS = {"unit": "dimensionless"}
 YEARS = {"unit": "years"}
@@ -159,15 +156,13 @@ class CentralGovernmentFunctions(BaseModel):
 class CentralGovernmentConfiguration(BaseModel):
     functions: CentralGovernmentFunctions = CentralGovernmentFunctions()
 
-    # Per-government flag: each government opts in independently.
     activate_progressive_pit: bool = Field(
         default=False,
         description="Opt in to progressive PIT for this government, built from "
         "the country's taxation data. False keeps the flat Income Tax rate.",
     )
 
-    # When set, revenue is progressive but wage-setting and after-tax income keep
-    # using the scalar Income Tax rate (refreshed each period to actual / base).
+    # Revenue is progressive but wage-setting keeps using the scalar Income Tax rate.
     pit_brackets: Optional[list[tuple[float, float]]] = Field(
         default=None,
         description="Progressive PIT brackets as (upper_bound, rate). None means use the flat Income Tax rate.",
@@ -221,9 +216,7 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Share of couple rental income to higher earner (0.5 = 50/50).",
     )
 
-    # Dividend integration (off for parity). The defaults below are 2014 BC
-    # values; a real run sources the rates from the dividend schedule CSV via
-    # build_central_government_configuration, not the YAML.
+    # Defaults are 2014 BC values; a real run sources these from the dividend schedule CSV.
     pit_dividend_integration: bool = Field(
         default=False,
         description="Enable Canadian dividend gross-up + dividend tax credit for firm and bank dividends.",

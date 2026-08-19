@@ -33,25 +33,18 @@ _RTC_REQUIRED_COLS = {
     "amount_basis",  # "once" or "per_dependant"; multiplicity only
 }
 
-# How the credit reaches the household. The two are NOT interchangeable: they
-# refer to different years, and both are computed at the same filing from the
-# same settled-year income, so paying them together is the natural mistake.
+# NOT interchangeable: the two legs refer to different years.
 DELIVERY_SETTLEMENT = "settlement"
 DELIVERY_INSTALMENTS = "instalments"
 _DELIVERIES = frozenset({DELIVERY_SETTLEMENT, DELIVERY_INSTALMENTS})
 
-# Eligibility per credit, mirroring the non-refundable reader's table. Absent
-# means unmapped: the builder drops it and the pool contributes zero, so an
-# unexpressible credit is never granted universally. Register a credit here
-# only together with its runtime branch.
+# Eligibility per credit; an unmapped credit is dropped and contributes zero.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
     "Eligible Individual Amount": {"age_min": 19},
     "Spousal Amount": {"in_couple_household": True},
     "Equivalent To Spouse Amount": {"is_single_parent": True},
     "Dependant Amount": {},  # multiplicity comes from amount_basis
-    # Social housing is excluded by the user's ruling (U3(iv)), not by statute:
-    # the model's tenure -1 marks it, and revisiting is gated on the
-    # social-housing pathway changing.
+    # Social housing is excluded by model convention, not by statute; tenure -1 marks it.
     "Renter's Amount": {"is_renter": True},
 }
 
@@ -132,8 +125,7 @@ class RefundableSchedule:
         if df.empty:
             raise ValueError(f"Refundable tax-credit CSV {path} has no rows for jurisdiction {juris}")
 
-        # Fail closed on an unknown delivery rather than defaulting one: a row
-        # silently treated as a settlement would pay a year early.
+        # Fail closed on an unknown delivery: a row read as a settlement would pay a year early.
         unknown = set(df["delivery"].astype(str).str.strip()) - _DELIVERIES
         if unknown:
             raise ValueError(

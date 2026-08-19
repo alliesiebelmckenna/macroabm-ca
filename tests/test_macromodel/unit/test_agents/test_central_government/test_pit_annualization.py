@@ -182,7 +182,7 @@ class TestDeferredWorkFallsBackRatherThanFailing:
     """An off-condition DEGRADES; it does not raise.
 
     Tax functionality is on by default and turns off two ways -- absent or
-    incomplete data, or the user switching it off -- and both are fallbacks.
+    incomplete data, or configuration switching it off -- and both are fallbacks.
     An earlier build refused instead, which turned an off-switch into a crash.
     """
 

@@ -119,15 +119,9 @@ class DataPaths:
     emissions_fraction_path: Optional[Path] = None
     firm_prices_path: Optional[Path] = None
     ch4_emissions_path: Optional[Path] = None
-    # Taxation schedule directory (optional); when absent, progressive PIT stays
-    # inactive. Loaded by from_raw_data via _load_taxation_reader.
+    # Optional; when absent, progressive PIT stays inactive.
     taxation_path: Optional[Path] = None
-    # Which schedule files to read inside taxation_path / "personal_income_tax".
-    # Defaults to the canonical filenames; override to read an alternative data
-    # source in the same schema. The jurisdictions covered by the bracket file
-    # are the governments that can run a progressive PIT — so pointing this at a
-    # BC-only file taxes BC progressively and leaves every other province flat,
-    # and pointing it at an all-province file activates them all. No code change.
+    # Filename overrides for the schedule files; jurisdictions come from the data, not the names.
     taxation_filenames: dict[str, str] = dataclass_field(default_factory=dict)
 
     @classmethod
@@ -790,8 +784,7 @@ class DataReaders:
         return weights_by_income
 
 
-# Subdirectory holding the personal-income-tax schedules, relative to the
-# taxation root; mirrors the reader package layout.
+# Subdirectory holding the PIT schedules, mirroring the reader package layout.
 _PIT_SUBDIR = "personal_income_tax"
 
 
@@ -831,8 +824,7 @@ def _load_taxation_reader(
     try:
         return TaxationStore.from_dir(pit_dir, **(filenames or {}))
     except FileNotFoundError as error:
-        # Subdirectory exists but a required schedule file does not; warn and
-        # fall back to the flat-tax setup as above.
+        # A required schedule file is missing: warn and fall back to the flat-tax setup.
         warnings.warn(
             f"A taxation schedule directory exists at {pit_dir} but a required "
             f"schedule file is missing; taxation is disabled (progressive PIT "

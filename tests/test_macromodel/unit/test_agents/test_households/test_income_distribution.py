@@ -4,9 +4,9 @@
 ``distribute_financial_income_to_individuals`` feed the progressive-PIT taxable
 pool (Pool A).  These tests pin the two invariants the pool relies on:
 
-* **Adults only** — recipients are the household members aged >= 18 (matching
+* Adults only — recipients are the household members aged >= 18 (matching
   ``pit_pools._household_context``); children receive nothing.
-* **Conservation** — the distributed total equals the household total, for the
+* Conservation — the distributed total equals the household total, for the
   adult path and for both conserving fallbacks (no age data / no adult member).
 
 The methods only touch ``self.ts.current("n_households")``,

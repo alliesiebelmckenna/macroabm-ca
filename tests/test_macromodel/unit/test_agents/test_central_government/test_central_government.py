@@ -164,7 +164,7 @@ class TestCentralGovernmentPIT:
         """Construction pre-calibration tolerates a non-finite income pool.
 
         A NaN pool at construction means a jurisdiction's synthetic income data
-        carries one (small-province zero-wage firms, 2026-07-22). Rather than
+        carries one (small-province zero-wage firms). Rather than
         abort the whole multi-province build, pre-calibration warns — naming the
         jurisdiction — and skips it, leaving the flat Income Tax rate. The
         runtime guard in compute_pit stays hard; this tolerance is

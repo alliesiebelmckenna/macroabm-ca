@@ -20,8 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    # Annotation-only import: kept out of the runtime path to avoid an import
-    # cycle with ``macromodel.simulation``, which imports this module back.
+    # Annotation-only import, kept out of the runtime path to avoid an import cycle.
     from macromodel.simulation import Simulation
 
 
