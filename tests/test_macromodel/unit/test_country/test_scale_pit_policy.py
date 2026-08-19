@@ -21,7 +21,7 @@ from macro_data.readers.taxation import TaxationReader
 from macromodel.agents.central_government.central_government import (
     pit_credit_defs_to_state_dicts,
 )
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
 )

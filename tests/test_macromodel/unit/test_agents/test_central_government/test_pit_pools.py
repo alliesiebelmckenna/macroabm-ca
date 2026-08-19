@@ -8,7 +8,7 @@ tax policy.
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_dividend_tax_items,

@@ -25,11 +25,11 @@ from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import NRTCSc
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import (
     compute_personal_income_tax,
 )
-from macromodel.agents.central_government import pit_pools
+from macromodel.agents.central_government.func import pit_pools
 from macromodel.agents.central_government.central_government import (
     pit_credit_defs_to_state_dicts,
 )
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_taxable_income_pool,

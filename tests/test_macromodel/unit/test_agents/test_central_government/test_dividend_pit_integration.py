@@ -12,7 +12,7 @@ guard against key confusion.
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     build_dividend_tax_items,
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus

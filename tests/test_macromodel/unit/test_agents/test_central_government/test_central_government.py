@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_taxable_income_pool,

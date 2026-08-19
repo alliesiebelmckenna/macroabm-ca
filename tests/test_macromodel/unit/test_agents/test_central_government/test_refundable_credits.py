@@ -9,7 +9,7 @@ delivery paths refer to different years.
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_refundable_credit_pools,
 )

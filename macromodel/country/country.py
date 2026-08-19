@@ -48,7 +48,7 @@ from macromodel.agents.central_government.central_government import (
     pit_credit_defs_to_state_dicts,
     pit_refundable_defs_to_state_dicts,
 )
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     annualize_pit_context,
     assert_pooled_streams_are_scaled,
