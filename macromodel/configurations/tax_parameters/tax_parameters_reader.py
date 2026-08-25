@@ -27,12 +27,10 @@ logger = logging.getLogger(__name__)
 
 _TAX_PARAMS_PATH = Path(__file__).parent / "tax_parameters.yaml"
 
-# Block supplying the scalars every jurisdiction starts from; a jurisdiction's
-# own block overrides it field by field.
+# Scalars every jurisdiction starts from; its own block overrides field by field.
 _DEFAULT_KEY = "default"
 
-# (yaml path, jurisdiction, fallback year) combinations already warned about,
-# so each fallback block warns once rather than once per requested year.
+# Already-warned fallbacks, so each block warns once rather than once per year.
 _FALLBACK_WARNED: set[tuple[str, str, int]] = set()
 
 # Scalar fields on CentralGovernmentConfiguration that this file may override.
@@ -45,8 +43,7 @@ _ALLOWED_FIELDS = frozenset(
     }
 )
 
-# Schedule fields that must NOT appear here; they are sourced from the taxation
-# CSVs, not the scalar YAML.
+# Schedule fields must NOT appear here; they come from the taxation CSVs.
 _SCHEDULE_FIELDS = frozenset(
     {
         "pit_brackets",
@@ -136,9 +133,7 @@ def read_tax_parameters(
     with open(yaml_path, "r") as file:
         data = yaml.safe_load(file) or {}
 
-    # A bare `on:` key is a YAML boolean, so Ontario's block would parse as True
-    # and be silently unreachable — the jurisdiction would inherit the defaults
-    # and any tuning of it would be quietly ignored. Fail loudly instead.
+    # A bare `on:` key is a YAML boolean, so Ontario would parse as True and be silently unreachable.
     non_string_keys = [k for k in data if not isinstance(k, str)]
     if non_string_keys:
         raise ValueError(
@@ -154,16 +149,9 @@ def read_tax_parameters(
             f"Available: {sorted(data)}"
         )
 
-    # The default block supplies every scalar; a jurisdiction's own block
-    # overrides it field by field. A jurisdiction listed with no values (or not
-    # listed at all) therefore inherits the defaults, which is what lets a new
-    # province run before anyone has tuned its assumptions.
-    base = _select_year(
-        data.get(_DEFAULT_KEY) or {}, year, _DEFAULT_KEY, yaml_path, required=False
-    )
-    own = _select_year(
-        data.get(jurisdiction) or {}, year, jurisdiction, yaml_path, required=False
-    )
+    # Defaults fill any jurisdiction not listed, which lets a new province run untuned.
+    base = _select_year(data.get(_DEFAULT_KEY) or {}, year, _DEFAULT_KEY, yaml_path, required=False)
+    own = _select_year(data.get(jurisdiction) or {}, year, jurisdiction, yaml_path, required=False)
 
     if not base and not own:
         raise KeyError(

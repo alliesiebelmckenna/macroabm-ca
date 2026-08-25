@@ -25,11 +25,11 @@ from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import NRTCSc
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import (
     compute_personal_income_tax,
 )
-from macromodel.agents.central_government import pit_pools
+from macromodel.agents.central_government.func import pit_pools
 from macromodel.agents.central_government.central_government import (
     pit_credit_defs_to_state_dicts,
 )
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_taxable_income_pool,
@@ -44,9 +44,7 @@ from macromodel.configurations.tax_parameters.central_government_builder import 
 # Committed schedules.
 #   parents[0]=test_central_government [1]=test_agents [2]=unit
 #   [3]=test_macromodel [4]=tests [5]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[5] / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[5] / "spoof_data" / "freda" / "personal_income_tax"
 _CREDITS_CSV = _COMMITTED_PIT_DIR / "non_refundable_tax_credits.csv"
 
 _YEAR = 2014
@@ -228,13 +226,9 @@ class TestPublishedScheduleReachesTheTaxComputation:
 
         # A lone filer: no age and no household context, so the Personal Amount
         # is the only credit for which they qualify.
-        ctx = PitContext(
-            employee_income=np.array([40000.0]), employee_si_rate=0.0
-        )
+        ctx = PitContext(employee_income=np.array([40000.0]), employee_si_rate=0.0)
         taxable = build_taxable_income_pool(ctx)
-        credit_defs = pit_credit_defs_to_state_dicts(
-            config.pit_non_refundable_tax_credits
-        )
+        credit_defs = pit_credit_defs_to_state_dicts(config.pit_non_refundable_tax_credits)
         credit_base = build_credit_base_pool(credit_defs, taxable, ctx)
 
         # BC 2014 published Personal Amount, valued at the published bottom rate.

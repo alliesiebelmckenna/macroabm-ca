@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.central_government import CentralGovernment
+from macro_data.readers.taxation import TaxationDataWarning
+from macromodel.agents.central_government.central_government import (
+    CentralGovernment,
+)
 
 UPPERS = np.array([50000.0, np.inf])
 RATES = np.array([0.10, 0.20])
@@ -28,9 +31,17 @@ def _gov(reconcile: bool = False) -> SimpleNamespace:
 
 
 def _period_tax(gov, annual_pool, out=None):
-    return CentralGovernment.compute_pit(
-        gov, annual_pool, None, None, steps_per_year=F, out_tax_per_ind=out
-    )
+    return CentralGovernment.compute_pit(gov, annual_pool, None, None, steps_per_year=F, out_tax_per_ind=out)
+
+
+def _advance(gov):
+    """Advance the government's shared period counter.
+
+    The runtime does this once per period in ``compute_taxes``. These tests
+    drive ``_reconcile_tax_year`` directly, so they own the advance -- which is
+    the point of the counter being government-owned rather than PIT-private.
+    """
+    gov.states["tax_step"] = int(gov.states.get("tax_step", 0)) + 1
 
 
 class TestApportionment:
@@ -40,6 +51,31 @@ class TestApportionment:
         assert _period_tax(_gov(), pool) == pytest.approx(annual / F)
 
 
+class TestCreditsGranted:
+    """What the non-refundable credits removed, as opposed to what they were worth."""
+
+    def test_only_the_credit_that_met_a_bill_is_recorded(self):
+        # One individual with a bill larger than the credit, one with a bill
+        # smaller than it. The second's excess credit is discarded by the floor
+        # on the liability, so it is not revenue foregone and must not be counted.
+        gov = _gov(reconcile=True)
+        quarterly = np.array([20000.0, 1000.0])
+        credit_base = np.array([10000.0, 10000.0])
+        granted: list = []
+        for _ in range(int(F) + 1):
+            _advance(gov)
+            pool = quarterly * F
+            out: list = []
+            CentralGovernment.compute_pit(gov, pool, credit_base, None, steps_per_year=F, out_tax_per_ind=out)
+            CentralGovernment._reconcile_tax_year(
+                gov, pool, out[0], credit_base, None, steps_per_year=F, out_credit_granted=granted
+            )
+
+        # 80,000 and 4,000 a year against a 1,000 credit each: the first is
+        # relieved in full, the second only down to zero.
+        assert granted == [pytest.approx(1000.0 + 400.0)]
+
+
 class TestYearEndFiling:
     """Steps 1..F are a calendar year; the filing at F+1 settles it."""
 
@@ -47,11 +83,14 @@ class TestYearEndFiling:
         gov = _gov(reconcile)
         booked = []
         for income in quarterly:
+            _advance(gov)
             pool = income * F
             out: list = []
             tax = _period_tax(gov, pool, out)
-            tax += CentralGovernment._reconcile_tax_year(
-                gov, pool, out[0], None, None, steps_per_year=F
+            # The settlement is per individual; this test books the period's
+            # revenue, which is its sum.
+            tax += float(
+                np.sum(CentralGovernment._reconcile_tax_year(gov, pool, out[0], None, None, steps_per_year=F)[0])
             )
             booked.append(tax)
         return np.array(booked), gov
@@ -61,8 +100,191 @@ class TestYearEndFiling:
         idle = np.zeros(2)
         booked, _ = self._year([earning, earning, idle, idle, idle])
 
-        true_annual = CentralGovernment.compute_pit(
-            _gov(), earning * 2, None, None
-        )
+        true_annual = CentralGovernment.compute_pit(_gov(), earning * 2, None, None)
         assert booked[4] < 0.0
         assert booked[:5].sum() == pytest.approx(true_annual)
+
+
+class TestSettlementIsPerIndividual:
+    """The filing returns a settlement PER INDIVIDUAL, not a total.
+
+    The shape is load-bearing rather than cosmetic: the refundable credit has to
+    reach the individuals who earned it, and a total cannot be attributed back
+    without a second allocation pass. Every assertion below fails if the return
+    collapses to a scalar or is broadcast from one.
+    """
+
+    def _settle(self, quarterly, gov=None):
+        """Run a year of *quarterly* pools and return the filing settlement."""
+        gov = gov or _gov(reconcile=True)
+        settlement = None
+        for income in quarterly:
+            _advance(gov)
+            pool = income * F
+            out: list = []
+            _period_tax(gov, pool, out)
+            settlement = CentralGovernment._reconcile_tax_year(gov, pool, out[0], None, None, steps_per_year=F)[0]
+        return settlement
+
+    def test_entries_differ_when_the_individuals_do(self):
+        # One earns only in Q1, one earns evenly. Annualizing Q1 income over the
+        # year over-withholds the first and not the second, so their settlements
+        # must differ -- a broadcast scalar would make them equal.
+        front_loaded = np.array([80000.0, 20000.0])
+        idle = np.array([0.0, 20000.0])
+        settlement = self._settle([front_loaded, idle, idle, idle, idle])
+
+        assert settlement[0] != settlement[1]
+        # The front-loaded individual over-withheld, so is refunded.
+        assert settlement[0] < 0.0
+
+
+class TestSharedPeriodCounter:
+    """``tax_step`` belongs to the government, not to the PIT.
+
+    A second tax with a year boundary reads the same count. Each property below
+    is one way the counter could go back to being PIT-private without anything
+    else noticing.
+    """
+
+    def test_reconcile_reads_the_counter_and_never_writes_it(self):
+        # Writing it here is what made it PIT-private: the write sat below an
+        # early return, so the count froze whenever PIT's reconciliation was off
+        # and a differently-gated tax would have stalled with it.
+        gov = _gov(reconcile=True)
+        gov.states["tax_step"] = 7
+        CentralGovernment._reconcile_tax_year(gov, np.zeros(2), np.zeros(2), None, None, steps_per_year=F)[0]
+        assert gov.states["tax_step"] == 7
+
+
+class TestCreditsDeferredToTheFiling:
+    """``pit_credits_at_filing`` withholds GROSS and credits once, at the filing."""
+
+    BASE = np.array([12000.0, 12000.0])
+
+    def _period(self, defer):
+        gov = _gov()
+        gov.states["pit_credits_at_filing"] = defer
+        pool = np.array([40000.0, 40000.0]) * F
+        return _period_tax(gov, pool, None), gov
+
+    def test_withholding_is_gross_when_credits_are_deferred(self):
+        gov = _gov()
+        gov.states["pit_credits_at_filing"] = True
+        pool = np.array([40000.0, 40000.0]) * F
+        with_credit = CentralGovernment.compute_pit(gov, pool, self.BASE, None, steps_per_year=F)
+        no_credit = CentralGovernment.compute_pit(gov, pool, None, None, steps_per_year=F)
+        # Deferred: supplying a credit arm must not change what is withheld.
+        assert with_credit == pytest.approx(no_credit)
+
+
+class TestDeferredWorkFallsBackRatherThanFailing:
+    """An off-condition DEGRADES; it does not raise.
+
+    Tax functionality is on by default and turns off two ways -- absent or
+    incomplete data, or configuration switching it off -- and both are fallbacks.
+    An earlier build refused instead, which turned an off-switch into a crash.
+    """
+
+    def _gov_with(self, **flags):
+        gov = _gov()
+        gov.states.update(flags)
+        return gov
+
+    def test_disables_deferral_and_warns_when_no_filing_runs(self):
+        gov = self._gov_with(
+            pit_credits_at_filing=True,
+            pit_investment_at_year_end=True,
+            pit_year_end_reconciliation=False,
+        )
+        with pytest.warns(TaxationDataWarning, match="Falling back"):
+            CentralGovernment._fall_back_if_deferred_work_cannot_land(gov, True)
+        assert gov.states["pit_credits_at_filing"] is False
+        assert gov.states["pit_investment_at_year_end"] is False
+
+
+class TestEffectiveRateFollowsTheAssessedPool:
+    """``states["Income Tax"]`` is a SIDE EFFECT of the assessment, not a switch.
+
+    No ``pit_wage_basis_effective_rate`` flag is built. The rate is
+    ``total_annual_tax / total_taxable_base`` over whichever pool ``compute_pit``
+    is handed, so narrowing the withheld pool makes it wage-based with nothing
+    else to set -- and a flag could not make it blended again without a second
+    assessment on a base the period no longer computes.
+    """
+
+    WAGES = np.array([30000.0, 30000.0])
+    INVESTMENT = np.array([20000.0, 20000.0])
+
+    def _rate(self, pool):
+        gov = _gov()
+        _period_tax(gov, pool * F)
+        return gov.states["Income Tax"]
+
+    def test_narrowing_the_pool_lowers_the_rate_to_a_wage_basis(self):
+        blended = self._rate(self.WAGES + self.INVESTMENT)
+        wage_only = self._rate(self.WAGES)
+        # Progressive brackets: dropping the top slice of the base lowers the
+        # average rate. Equality here would mean the pool never reached the rate.
+        assert wage_only < blended
+
+
+class TestInstalmentCarryForward:
+    """The instalment path pays a quarter at each of four periods from the filing.
+
+    The entitlement is fixed at the filing and drawn down afterwards, so the
+    periods that pay it out never see the income it was computed from. That is
+    why it is carried in state rather than recomputed.
+    """
+
+    def _gov_at_filing(self, entitlement):
+        """A government mid-run, with an instalment entitlement just struck."""
+        gov = _gov(reconcile=True)
+        gov.states["pit_rtc_instalment_amount"] = np.asarray(entitlement) / 4.0
+        gov.states["pit_rtc_instalments_left"] = 4
+        return gov
+
+    def _period(self, gov):
+        _advance(gov)
+        pool = np.array([10000.0, 10000.0]) * F
+        out: list = []
+        _period_tax(gov, pool, out)
+        _settle, _rtc_s, rtc_i = CentralGovernment._reconcile_tax_year(gov, pool, out[0], None, None, steps_per_year=F)
+        return float(np.sum(rtc_i))
+
+    def test_the_filing_itself_splits_the_entitlement_into_quarters(self):
+        """Drives a REAL filing, so the quartering is exercised, not seeded.
+
+        The tests above seed the instalment state directly and therefore prove
+        only the draw-down. Without this one, paying the whole entitlement at
+        the filing in a single lump passes every one of them.
+        """
+        gov = _gov(reconcile=True)
+        entitlement = np.array([800.0, 400.0])
+
+        def annual_rtc(_income, _defs):
+            # settlement leg zero; the instalment leg is what is quartered.
+            return np.zeros(2), entitlement
+
+        paid = []
+        for _ in range(6):
+            _advance(gov)
+            pool = np.array([10000.0, 10000.0]) * F
+            out: list = []
+            _period_tax(gov, pool, out)
+            _s, _r, rtc_i = CentralGovernment._reconcile_tax_year(
+                gov,
+                pool,
+                out[0],
+                None,
+                None,
+                steps_per_year=F,
+                annual_rtc=annual_rtc,
+            )
+            paid.append(float(np.sum(rtc_i)))
+
+        # Filing lands at step 5, so nothing is paid in steps 1-4.
+        assert paid[:4] == pytest.approx([0.0, 0.0, 0.0, 0.0])
+        # A quarter of 1200 at the filing step and at the one after it.
+        assert paid[4] == pytest.approx(300.0)
+        assert paid[5] == pytest.approx(300.0)

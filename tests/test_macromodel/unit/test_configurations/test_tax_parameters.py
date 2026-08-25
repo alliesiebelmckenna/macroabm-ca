@@ -1,7 +1,6 @@
 """Tests for the BC/Canada tax scalar-parameter reader and config builder."""
 
 import functools
-import logging
 import math
 from pathlib import Path
 
@@ -15,17 +14,11 @@ from macromodel.configurations import (
     build_central_government_configuration,
     read_tax_parameters,
 )
-from macromodel.configurations.tax_parameters.tax_parameters_reader import (
-    _ALLOWED_FIELDS,
-)
 
 # Committed schedules used as explicit test fixtures (the builder now consumes a
 # loaded TaxationReader rather than resolving paths itself).
 #   parents[0]=test_configurations [1]=unit [2]=test_macromodel [3]=tests [4]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 @functools.lru_cache(maxsize=1)
@@ -36,16 +29,10 @@ def _committed_reader() -> TaxationReader:
 
 def _build(jurisdiction: str = "bc", year: int = 2014, **kwargs):
     """Build a BC config from the committed schedules (the common test path)."""
-    return build_central_government_configuration(
-        _committed_reader(), jurisdiction, year, **kwargs
-    )
+    return build_central_government_configuration(_committed_reader(), jurisdiction, year, **kwargs)
 
 
 class TestReadTaxParameters:
-
-
-
-
     def test_absent_later_year_falls_back_to_latest_prior(self):
         # 2015 is not packaged (only 2014); its scalar assumptions fall back to
         # the latest prior year (2014) rather than raising.
@@ -56,8 +43,6 @@ class TestReadTaxParameters:
         bad.write_text("bc:\n  2014:\n    pit_brackets: [[1.0, 0.1]]\n")
         with pytest.raises(ValueError, match="Schedule field"):
             read_tax_parameters("bc", 2014, path=bad)
-
-
 
 
 class TestApplyTaxParameters:
@@ -73,10 +58,7 @@ class TestApplyTaxParameters:
         assert applied.pit_brackets == [(50000.0, 0.1), (math.inf, 0.2)]
 
 
-
 class TestBuildCentralGovernmentConfiguration:
-
-
     def test_household_credits_apply_through_build_to_run(self):
         """End-to-end: the Spousal and Equivalent-To-Spouse credits carried by
         the builder actually reduce tax through the runtime credit pool.  Age no
@@ -85,20 +67,16 @@ class TestBuildCentralGovernmentConfiguration:
         with and without the two credits."""
         import numpy as np
 
-        from macromodel.agents.central_government.pit_pools import (
+        from macromodel.agents.central_government.func.pit_pools import (
             PitContext,
             build_credit_base_pool,
         )
         from macromodel.agents.households.household_properties import HouseholdType
 
         config = _build("bc", 2014)
-        spousal_amt = next(
-            c.amount for c in config.pit_non_refundable_tax_credits if c.credit == "Spousal Amount"
-        )
+        spousal_amt = next(c.amount for c in config.pit_non_refundable_tax_credits if c.credit == "Spousal Amount")
         equiv_amt = next(
-            c.amount
-            for c in config.pit_non_refundable_tax_credits
-            if c.credit == "Equivalent To Spouse Amount"
+            c.amount for c in config.pit_non_refundable_tax_credits if c.credit == "Equivalent To Spouse Amount"
         )
 
         # Convert the built credits into the runtime states-dict form using the
@@ -127,14 +105,8 @@ class TestBuildCentralGovernmentConfiguration:
         )
 
         all_defs = to_defs(config.pit_non_refundable_tax_credits)
-        wo_defs = [
-            d
-            for d in all_defs
-            if d["credit"] not in {"Spousal Amount", "Equivalent To Spouse Amount"}
-        ]
-        delta = build_credit_base_pool(all_defs, taxable, ctx) - build_credit_base_pool(
-            wo_defs, taxable, ctx
-        )
+        wo_defs = [d for d in all_defs if d["credit"] not in {"Spousal Amount", "Equivalent To Spouse Amount"}]
+        delta = build_credit_base_pool(all_defs, taxable, ctx) - build_credit_base_pool(wo_defs, taxable, ctx)
 
         # Individual 0: spouse (individual 1) has zero income -> full Spousal.
         assert delta[0] == pytest.approx(spousal_amt)
@@ -144,14 +116,6 @@ class TestBuildCentralGovernmentConfiguration:
         assert delta[2] == pytest.approx(equiv_amt)
         # Individual 3: the dependant child claims nothing itself.
         assert delta[3] == pytest.approx(0.0)
-
-
-
-
-
-
-
-
 
     def test_build_out_of_table_bracket_year_raises(self):
         """The builder is lookup-only on brackets: a year the bracket schedule
@@ -179,6 +143,7 @@ class TestDeferredCreditSafety:
         from macro_data.readers.taxation.personal_income_tax.nrtc_schedule import (
             NRTCSchedule,
         )
+
         csv = tmp_path / "tc.csv"
         csv.write_text(
             "year,jurisdiction,credit,amount,top,rate,clawback,clawback_rate,index\n"
@@ -186,11 +151,11 @@ class TestDeferredCreditSafety:
         )
         return NRTCSchedule.from_csv(csv, jurisdiction="bc").credits[0]
 
-
     def test_unknown_kind_dropped_by_builder(self, tmp_path):
         from macromodel.configurations.tax_parameters.central_government_builder import (
             _credit_component_to_def,
         )
+
         c = self._load_one("Totally Made Up Credit", tmp_path)
         assert _credit_component_to_def(c) is None  # not carried to the runtime
 
@@ -215,10 +180,8 @@ class TestDeferredCreditSafety:
         from macromodel.configurations.tax_parameters.central_government_builder import (
             _credit_component_to_def,
         )
+
         assert _credit_component_to_def(self._load_one(kind, tmp_path)) is None
-
-
-
 
 
 class TestActivateTaxation:
@@ -239,7 +202,3 @@ class TestActivateTaxation:
         config = activate_taxation(base, _committed_reader(), year=2014)
         assert config is base
         assert config.pit_brackets is None
-
-
-
-

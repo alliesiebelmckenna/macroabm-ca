@@ -22,28 +22,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-
 # Required columns in the consolidated non_refundable_tax_credits.csv.
 _TC_REQUIRED_COLS = {
     "year",  # taxation year the row applies to
     "jurisdiction",  # jurisdiction key (e.g. "BC")
-    "credit",    # credit name, e.g. "Personal Amount", "Age Amount"
-    "index",     # schema check only: required for shape, no longer read
+    "credit",  # credit name, e.g. "Personal Amount", "Age Amount"
+    "index",  # schema check only: required for shape, no longer read
 }
 
 
-# Maps each credit to a dict of eligibility rules; an individual is
-# eligible when all rules in the dict are satisfied. Expand as credits activate.
-#
-# Only credits the runtime can express are registered. A credit published in the
-# schedule but absent here is unmapped: the builder drops it and the runtime
-# credit pool contributes zero, so an unexpressible credit is never granted
-# universally. Register a credit here only together with its runtime branch.
+# Eligibility rules per credit; an unregistered credit is unmapped and contributes zero. Register one only with its runtime branch.
 _ELIGIBILITY_RULES: dict[str, dict[str, object]] = {
-    "Personal Amount":          {},                                     # universal
-    "Age Amount":               {"age_min": 65},
-    "Spousal Amount":           {"in_couple_household": True},          # married / common-law
-    "Equivalent To Spouse Amount": {"is_single_parent": True},         # single parent / caregiver
+    "Personal Amount": {},  # universal
+    "Age Amount": {"age_min": 65},
+    "Spousal Amount": {"in_couple_household": True},  # married / common-law
+    "Equivalent To Spouse Amount": {"is_single_parent": True},  # single parent / caregiver
 }
 
 
@@ -124,12 +117,9 @@ class NRTCSchedule:
         juris = jurisdiction.upper()
         df = df[df["jurisdiction"].astype(str).str.upper() == juris].copy()
         if df.empty:
-            raise ValueError(
-                f"Tax-credit CSV {path} does not contain any rows for jurisdiction {juris}"
-            )
+            raise ValueError(f"Tax-credit CSV {path} does not contain any rows for jurisdiction {juris}")
 
-        # Minimum year, not the first row's, so an unsorted CSV does not shift
-        # the base credit set.
+        # Minimum year, not the first row's, so an unsorted CSV does not shift the base set.
         start_year = int(df["year"].min())
 
         # Build a component per row, grouped by year for statutory lookup.
@@ -144,8 +134,7 @@ class NRTCSchedule:
                 continue
 
             amount = float(str(raw_amount).replace(",", ""))
-            # Keep $0 credits: they carry the eligibility wiring with no
-            # revenue impact by default.
+            # Keep $0 credits: they carry the eligibility wiring.
 
             # Parse optional clawback fields (spousal / dependent income tests).
             clawback: Optional[float] = None
@@ -161,8 +150,7 @@ class NRTCSchedule:
             # Look up eligibility rules
             eligibility = _ELIGIBILITY_RULES.get(credit)
             if eligibility is None:
-                # Unknown credit: mark it non-expressible so the config builder
-                # skips it rather than granting it to everyone.
+                # Unknown credit: mark non-expressible so the builder skips it.
                 eligibility = {"_deferred_unmapped": True}
 
             credits_by_year.setdefault(int(row["year"]), []).append(
@@ -204,8 +192,7 @@ class NRTCSchedule:
         path = schedule_dir / filename
         if not path.exists():
             raise FileNotFoundError(
-                f"Tax-credit file not found: {path}\n"
-                f"Available: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
+                f"Tax-credit file not found: {path}\nAvailable: {sorted([p.name for p in schedule_dir.glob('*.csv')])}"
             )
         return cls.from_csv(path, jurisdiction=jurisdiction)
 

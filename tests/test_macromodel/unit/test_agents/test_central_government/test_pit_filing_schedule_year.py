@@ -36,10 +36,18 @@ def _gov() -> SimpleNamespace:
             },
         }
     )
-    gov._pit_schedule_for_year = lambda year: CentralGovernment._pit_schedule_for_year(
-        gov, year
-    )
+    gov._pit_schedule_for_year = lambda year: CentralGovernment._pit_schedule_for_year(gov, year)
     return gov
+
+
+def _advance(gov):
+    """Advance the government's shared period counter.
+
+    The runtime does this once per period in ``compute_taxes``. These tests
+    drive ``_reconcile_tax_year`` directly, so they own the advance -- which is
+    the point of the counter being government-owned rather than PIT-private.
+    """
+    gov.states["tax_step"] = int(gov.states.get("tax_step", 0)) + 1
 
 
 def _step(gov, income_per_ind):
@@ -50,12 +58,9 @@ def _step(gov, income_per_ind):
     """
     pool = income_per_ind * F
     out: list = []
-    CentralGovernment.compute_pit(
-        gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out
-    )
-    return CentralGovernment._reconcile_tax_year(
-        gov, pool, out[0], None, None, steps_per_year=F
-    )
+    CentralGovernment.compute_pit(gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out)
+    # Per-individual settlement; these cases assert on the settled TOTAL.
+    return float(np.sum(CentralGovernment._reconcile_tax_year(gov, pool, out[0], None, None, steps_per_year=F)[0]))
 
 
 class TestFilingUsesTheSettledYearsSchedule:
@@ -85,11 +90,10 @@ class TestFilingUsesTheSettledYearsSchedule:
 
         income = np.array([10000.0, 10000.0])
         for _ in range(4):
+            _advance(gov)
             pool = income * F
             out: list = []
-            CentralGovernment.compute_pit(
-                gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out
-            )
+            CentralGovernment.compute_pit(gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out)
             CentralGovernment._reconcile_tax_year(
                 gov,
                 pool,
@@ -98,14 +102,13 @@ class TestFilingUsesTheSettledYearsSchedule:
                 None,
                 steps_per_year=F,
                 annual_credit_base=annual_credit_base,
-            )
+            )[0]
         gov.states["pit_calendar_year"] = 2015
         gov.states["pit_rates"] = RAISED_RATES
+        _advance(gov)
         pool = income * F
         out = []
-        CentralGovernment.compute_pit(
-            gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out
-        )
+        CentralGovernment.compute_pit(gov, pool, None, None, steps_per_year=F, out_tax_per_ind=out)
         CentralGovernment._reconcile_tax_year(
             gov,
             pool,
@@ -114,7 +117,7 @@ class TestFilingUsesTheSettledYearsSchedule:
             None,
             steps_per_year=F,
             annual_credit_base=annual_credit_base,
-        )
+        )[0]
 
         # The filing asked for the settled year's credits, not the new year's.
         # 2014 publishes none, so the fragment carries no credit definitions.

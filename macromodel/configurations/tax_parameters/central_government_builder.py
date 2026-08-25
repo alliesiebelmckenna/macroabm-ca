@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Optional
 
 from macromodel.configurations.central_government_configuration import (
     CentralGovernmentConfiguration,
+    RefundableCreditDef,
     TaxCreditDef,
 )
 
@@ -43,11 +44,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Eligibility keys the runtime credit pool can act on; a credit using any other
-# key is skipped. These map to the ``credit`` branches in ``_credit_amount``.
-_EXPRESSIBLE_ELIGIBILITY_KEYS = frozenset(
-    {"age_min", "in_couple_household", "is_single_parent"}
-)
+# Eligibility keys the runtime can act on; any other key is skipped.
+_EXPRESSIBLE_ELIGIBILITY_KEYS = frozenset({"age_min", "in_couple_household", "is_single_parent", "is_renter"})
 
 
 def _credit_component_to_def(component: TaxCreditComponent) -> Optional[TaxCreditDef]:
@@ -75,6 +73,46 @@ def _credit_component_to_def(component: TaxCreditComponent) -> Optional[TaxCredi
         eligibility_age_min=component.eligibility.get("age_min"),
         clawback=component.clawback,
         top=component.top,
+    )
+
+
+def _refundable_component_to_def(component) -> Optional[RefundableCreditDef]:
+    """Map a data-layer refundable component to its config-layer definition.
+
+    Fail-closed exactly as the non-refundable mapper is: a component whose
+    eligibility the runtime cannot act on is SKIPPED and logged, never granted
+    universally. Unmapped in the reader means ``eligibility is None``, which is
+    a stronger signal than an empty dict -- the latter means genuinely universal.
+    """
+    if component.eligibility is None:
+        logger.warning(
+            "Skipping refundable credit '%s': it is not registered in the "
+            "reader's eligibility table, so the runtime has no branch for it. "
+            "Omitted rather than granted universally.",
+            component.credit,
+        )
+        return None
+
+    extra_keys = set(component.eligibility) - _EXPRESSIBLE_ELIGIBILITY_KEYS
+    if extra_keys:
+        logger.warning(
+            "Skipping refundable credit '%s': eligibility rule(s) %s are not "
+            "yet applied by the runtime credit pool. Omitted to avoid applying "
+            "it universally.",
+            component.credit,
+            sorted(extra_keys),
+        )
+        return None
+
+    return RefundableCreditDef(
+        credit_name=component.credit_name,
+        credit=component.credit,
+        delivery=component.delivery,
+        amount=component.amount,
+        amount_basis=component.amount_basis,
+        eligibility_age_min=component.eligibility.get("age_min"),
+        clawback=component.clawback,
+        clawback_rate=component.clawback_rate,
     )
 
 
@@ -153,8 +191,7 @@ def build_central_government_configuration(
     """
     base = base_config if base_config is not None else CentralGovernmentConfiguration()
 
-    # No taxation data: progressive PIT is not activated, so return the base
-    # (flat) configuration unchanged for upstream parity.
+    # No taxation data: return the base flat configuration for upstream parity.
     if taxation_reader is None:
         return base
 
@@ -167,19 +204,23 @@ def build_central_government_configuration(
     pit_non_refundable_tax_credits: Optional[list[TaxCreditDef]] = None
     if schedule.non_refundable_tax_credits is not None:
         components = schedule.non_refundable_tax_credits.get_credits(year=year)
-        mapped = [
-            d for d in (_credit_component_to_def(c) for c in components) if d is not None
-        ]
+        mapped = [d for d in (_credit_component_to_def(c) for c in components) if d is not None]
         pit_non_refundable_tax_credits = mapped or None
 
-    # Dividend gross-up / DTC rates: their presence on the reader is the
-    # activation signal; when absent, integration stays off.
+    # Presence on the reader means the jurisdiction grants them; same fail-closed mapping.
+    pit_refundable_tax_credits: Optional[list[RefundableCreditDef]] = None
+    if taxation_reader.refundable_schedule is not None:
+        refundable_components = taxation_reader.refundable_schedule.get_credits(year=year)
+        mapped_refundable = [
+            d for d in (_refundable_component_to_def(c) for c in refundable_components) if d is not None
+        ]
+        pit_refundable_tax_credits = mapped_refundable or None
+
+    # Presence of dividend rates is the activation signal; absent leaves integration off.
     dividend_updates: dict = {}
     dividend_schedule_present = taxation_reader.dividend_schedule is not None
     if dividend_schedule_present:
-        dividend_rates = taxation_reader.dividend_schedule.get_year_rates(
-            year=year
-        )
+        dividend_rates = taxation_reader.dividend_schedule.get_year_rates(year=year)
         eligible = dividend_rates["eligible"]
         non_eligible = dividend_rates["non_eligible"]
         dividend_updates = {
@@ -194,14 +235,12 @@ def build_central_government_configuration(
         update={
             "pit_brackets": pit_brackets,
             "pit_non_refundable_tax_credits": pit_non_refundable_tax_credits,
+            "pit_refundable_tax_credits": pit_refundable_tax_credits,
             **dividend_updates,
         }
     )
-    config = apply_tax_parameters(
-        config, jurisdiction=jurisdiction, year=year, path=params_path
-    )
-    # Applied after the YAML scalars so schedule presence wins over the YAML
-    # switch (which governs only when no schedule is present).
+    config = apply_tax_parameters(config, jurisdiction=jurisdiction, year=year, path=params_path)
+    # Applied after the YAML scalars, so schedule presence wins over the YAML switch.
     if dividend_schedule_present:
         config = config.model_copy(update={"pit_dividend_integration": True})
     return config

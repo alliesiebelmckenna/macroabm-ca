@@ -503,9 +503,7 @@ class Households(Agent):
             "Rent"
         ].sum()
         rental_income = np.zeros(self.ts.current("n_households"))
-        rental_income[housing_data_rented_out_grouped.index.values] = (
-            housing_data_rented_out_grouped.values
-        )
+        rental_income[housing_data_rented_out_grouped.index.values] = housing_data_rented_out_grouped.values
         return rental_income
 
     def compute_rental_income(
@@ -531,9 +529,7 @@ class Households(Agent):
         return (1 - income_taxes) * gross
 
     @staticmethod
-    def _adult_members(
-        inds_in_hh: np.ndarray, individuals_age: np.ndarray | None
-    ) -> np.ndarray:
+    def _adult_members(inds_in_hh: np.ndarray, individuals_age: np.ndarray | None) -> np.ndarray:
         """A household's income-receiving members: the adults (age >= 18).
 
         Matches the adult definition used by ``pit_pools._household_context`` so

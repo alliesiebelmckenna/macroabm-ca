@@ -14,17 +14,14 @@ import pytest
 
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import (
     PITSchedule,
-    compute_personal_income_tax,
     _validate_brackets,
+    compute_personal_income_tax,
 )
 
 # Committed fallback copy of the BC PIT schedules
 # (repo-root/spoof_data/freda/personal_income_tax).
 #   parents[0]=test_readers [1]=unit [2]=test_macro_data [3]=tests [4]=repo root
-BC_SCHEDULE_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "spoof_data" / "freda" / "personal_income_tax"
-)
+BC_SCHEDULE_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 # Fixtures
@@ -33,14 +30,8 @@ BC_SCHEDULE_DIR = (
 @pytest.fixture(scope="module")
 def sample_csv_path() -> Path:
     """Write a minimal 2-bracket PIT CSV to a temp file."""
-    csv_content = (
-        "year,jurisdiction,lower,rate,index\n"
-        "2020,BC,0,0.10,1\n"
-        "2020,BC,50000,0.25,1\n"
-    )
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".csv", delete=False
-    ) as f:
+    csv_content = "year,jurisdiction,lower,rate,index\n2020,BC,0,0.10,1\n2020,BC,50000,0.25,1\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write(csv_content)
         return Path(f.name)
 
@@ -50,7 +41,6 @@ def sample_csv_path() -> Path:
 
 class TestComputeProgressiveTax:
     """Standalone progressive tax computation."""
-
 
     def test_two_brackets_marginal_slicing(self):
         """Income spans two brackets — each slice taxed at its own rate."""
@@ -64,31 +54,18 @@ class TestComputeProgressiveTax:
         assert np.allclose(tax, [3.0, 12.5, 42.5])
 
 
-
-
-
-
-
 # 2. _validate_brackets — input validation
 
 
 class TestValidateBrackets:
     """Input validation for bracket arrays."""
 
-
     def test_non_increasing_uppers_raises(self):
         """Non-strictly-increasing uppers raise."""
         with pytest.raises(ValueError, match="strictly increasing"):
-            _validate_brackets(
-                np.array([100.0, 50.0]), np.array([0.1, 0.2])
-            )
+            _validate_brackets(np.array([100.0, 50.0]), np.array([0.1, 0.2]))
 
-
-
-
-
-# 3. PITSchedule — class-level tests
-
+    # 3. PITSchedule — class-level tests
 
     def test_nan_is_rejected_in_thresholds_and_rates(self):
         """NaN passes every range check, so it needs its own.
@@ -111,13 +88,9 @@ class TestPITSchedule:
 
     def test_from_csv_loads_bc_2014(self):
         """The consolidated file loads BC 2014 with 6 brackets."""
-        schedule = PITSchedule.from_csv(
-            BC_SCHEDULE_DIR / "rates_thresholds.csv", jurisdiction="bc"
-        )
+        schedule = PITSchedule.from_csv(BC_SCHEDULE_DIR / "rates_thresholds.csv", jurisdiction="bc")
         assert schedule.start_year == 2014
-        lower_bounds, uppers, rates = schedule.get_brackets(
-            year=2014
-        )
+        lower_bounds, uppers, rates = schedule.get_brackets(year=2014)
         assert len(uppers) == 6
         assert len(rates) == 6
         assert len(lower_bounds) == 6
@@ -126,12 +99,7 @@ class TestPITSchedule:
         # Last upper is inf
         assert np.isinf(uppers[-1])
         # Rates match expected BC 2014 values
-        assert np.allclose(
-            rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168]
-        )
-
-
-
+        assert np.allclose(rates, [0.0506, 0.077, 0.105, 0.1229, 0.147, 0.168])
 
     def test_get_brackets_out_of_table_raises(self):
         """A year past the published schedule raises (the reader is lookup-only;
@@ -148,22 +116,15 @@ class TestPITSchedule:
     def test_from_csv_missing_columns_raises(self):
         """CSV missing required columns raises ValueError."""
         csv = "year,lower\n2020,0\n"
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             f.write(csv)
             p = f.name
 
         try:
-            with pytest.raises(
-                ValueError, match="missing required columns"
-            ):
+            with pytest.raises(ValueError, match="missing required columns"):
                 PITSchedule.from_csv(p, jurisdiction="bc")
         finally:
             Path(p).unlink(missing_ok=True)
-
-
-
 
 
 # 6. PITSchedule — statutory lookup over a MULTI-YEAR schedule
@@ -193,7 +154,6 @@ class TestStatutoryLookup:
         )
         return p
 
-
     def test_lookup_captures_statutory_rate_change(self, tmp_path):
         """2016's bottom/top rates (0.06/0.11) differ from 2014's (0.05/0.10);
         compounding can't produce them — only a per-year lookup can."""
@@ -201,5 +161,3 @@ class TestStatutoryLookup:
         lower_bounds, _, rates = sched.get_brackets(year=2016)
         assert np.allclose(lower_bounds, [0.0, 42000.0])
         assert np.allclose(rates, [0.06, 0.11])
-
-

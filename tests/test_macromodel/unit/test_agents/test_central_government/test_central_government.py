@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_personal_income_tax
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_taxable_income_pool,
@@ -23,9 +23,7 @@ def _pools_for(cg, employee_income):
         employee_si_rate=float(cg.states["Employee Social Insurance Tax"]),
     )
     taxable = build_taxable_income_pool(ctx)
-    credits = build_credit_base_pool(
-        cg.states.get("pit_non_refundable_tax_credits"), taxable, ctx
-    )
+    credits = build_credit_base_pool(cg.states.get("pit_non_refundable_tax_credits"), taxable, ctx)
     return taxable, credits
 
 
@@ -66,13 +64,10 @@ class TestCentralGovernment:
 class TestCentralGovernmentPIT:
     """Progressive PIT: state storage, tax computation, and effective-rate update."""
 
-
     def test_flat_config_has_no_pit_states(self, test_central_government):
         """Without pit_brackets, pit_uppers/rates are absent."""
         assert "pit_uppers" not in test_central_government.states
         assert "pit_rates" not in test_central_government.states
-
-
 
     def test_compute_taxes_effective_rate_update(self, test_central_government_pit):
         """After compute_taxes, the effective Income Tax rate is
@@ -98,7 +93,7 @@ class TestCentralGovernmentPIT:
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
             taxable_income_per_ind=taxable,
-            credit_base_per_ind=credits,
+            nrtc_base_per_ind=credits,
         )
 
         # Recompute the expected effective rate from the tax paid
@@ -114,14 +109,11 @@ class TestCentralGovernmentPIT:
             f"Effective rate {cg.states['Income Tax']} != expected {expected_rate}"
         )
 
-
     # pit_non_refundable_tax_credits (multi-component)
 
-
-
-
     def test_missing_pool_raises_rather_than_assembling_one(
-        self, test_central_government_pit_full,
+        self,
+        test_central_government_pit_full,
     ):
         """A pool the caller failed to supply is an error, not something to
         assemble here: only the processing phase holds the household context
@@ -137,9 +129,7 @@ class TestCentralGovernmentPIT:
                 current_ind_employee_income=emp_income,
                 current_total_rent_paid=0.0,
                 current_income_financial_assets=np.zeros(2),
-                current_ind_activity=np.array(
-                    [ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED]
-                ),
+                current_ind_activity=np.array([ActivityStatus.EMPLOYED, ActivityStatus.EMPLOYED]),
                 current_ind_realised_cons=np.zeros(2),
                 current_bank_profits=np.zeros(1),
                 current_firm_production=np.zeros(1),
@@ -154,7 +144,8 @@ class TestCentralGovernmentPIT:
             )
 
     def test_non_finite_pool_raises_rather_than_freezing_the_rate(
-        self, test_central_government_pit_full,
+        self,
+        test_central_government_pit_full,
     ):
         """A NaN in the pools must not leave a plausible rate beside NaN revenue.
 
@@ -173,7 +164,7 @@ class TestCentralGovernmentPIT:
         """Construction pre-calibration tolerates a non-finite income pool.
 
         A NaN pool at construction means a jurisdiction's synthetic income data
-        carries one (small-province zero-wage firms, 2026-07-22). Rather than
+        carries one (small-province zero-wage firms). Rather than
         abort the whole multi-province build, pre-calibration warns — naming the
         jurisdiction — and skips it, leaving the flat Income Tax rate. The
         runtime guard in compute_pit stays hard; this tolerance is
@@ -194,10 +185,20 @@ class TestCentralGovernmentPIT:
         assert any("CAN_XX" in r.getMessage() for r in caplog.records)
 
     def test_tax_credits_floor_at_zero(
-        self, test_central_government_pit_full,
+        self,
+        test_central_government_pit_full,
     ):
-        """Tax credit is non-refundable: tax floored at 0."""
+        """Tax credit is non-refundable: tax floored at 0, PER PERIOD.
+
+        Pinned to the legacy path deliberately. ``pit_credits_at_filing``
+        defaults on, which withholds gross and moves this floor to the filing --
+        so without the pin this test would read as broken while the code was
+        behaving as designed. The legacy path is still supported and an
+        unexercised branch rots, so it keeps its own proof; the deferred-path
+        companion lives in the extra-depth mirror.
+        """
         cg = test_central_government_pit_full
+        cg.states["pit_credits_at_filing"] = False
 
         emp_income = np.array([5000.0])
         activity = np.array([ActivityStatus.EMPLOYED])
@@ -218,21 +219,10 @@ class TestCentralGovernmentPIT:
             taxes_less_subsidies_rates=np.zeros(1),
             current_total_exports=0.0,
             taxable_income_per_ind=taxable,
-            credit_base_per_ind=credits,
+            nrtc_base_per_ind=credits,
         )
 
         last_tax = cg.ts.get_aggregate("taxes_income")[-1]
         assert last_tax == pytest.approx(0.0, abs=1e-6)
 
-
-
-
-
-
-
-
     # Pre-calibration: effective rate from employee income
-
-
-
-

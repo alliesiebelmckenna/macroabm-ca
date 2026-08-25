@@ -12,10 +12,8 @@ guard against key confusion.
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.pit_pools import (
-    PitContext,
+from macromodel.agents.central_government.func.pit_pools import (
     build_dividend_tax_items,
-    build_taxable_income_pool,
 )
 from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.sim_calendar import steps_per_year
@@ -27,9 +25,8 @@ _ELIG_DTC = 0.10
 _NONELIG_DTC = 0.0259
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+
 
 def _bank_items(dividend_income, small_business_share):
     return build_dividend_tax_items(
@@ -68,27 +65,17 @@ def _build_cg_with_integration(datawrapper, bank_share, firm_share=0.9):
     )
 
 
-# ---------------------------------------------------------------------------
 # 1. Pool-level arithmetic
-# ---------------------------------------------------------------------------
 
 
-
-# ---------------------------------------------------------------------------
 # 2. End-to-end revenue
-# ---------------------------------------------------------------------------
 
 
-
-# ---------------------------------------------------------------------------
 # 3. States propagation
-# ---------------------------------------------------------------------------
 
 
-
-# ---------------------------------------------------------------------------
 # 4. Country-level wiring: bank profits → gross dividend → grossed-up + DTC
-# ---------------------------------------------------------------------------
+
 
 class TestBankDividendCountryWiring:
     """Full chain from raw bank profits to PIT revenue, reading from CG states.
@@ -101,7 +88,6 @@ class TestBankDividendCountryWiring:
     _BANK_PROFIT = 2_000.0
     _PAYOUT = 0.5
     _BANK_SHARE = 0.25
-
 
     def test_bank_profits_to_pit_revenue(self, test_individuals, datawrapper):
         """Full chain from bank profits to PIT revenue matches the reviewer's formula."""
@@ -129,6 +115,13 @@ class TestBankDividendCountryWiring:
             non_eligible_dtc_rate=float(cg.states["dividend_non_eligible_dtc_rate"]),
         )
 
+        # Pinned to the legacy per-period crediting path. This test's oracle is
+        # the gross-up/DTC arithmetic netted INSIDE the period, which is exactly
+        # what ``pit_credits_at_filing`` (on by default) stops doing: it withholds
+        # gross and credits once at the filing. Pinning keeps the oracle testing
+        # the wiring it was written for rather than silently re-deriving it.
+        cg.states["pit_credits_at_filing"] = False
+
         emp_income = np.array([0.0])  # no wage income — isolates the dividend path
         taxable = emp_income * (1.0 - si_rate) + grossed_up
         pit_gross = compute_personal_income_tax(taxable, cg.states["pit_uppers"], cg.states["pit_rates"])
@@ -148,8 +141,8 @@ class TestBankDividendCountryWiring:
             current_household_new_real_wealth=np.zeros(1),
             taxes_less_subsidies_rates=np.zeros(1),
             taxable_income_per_ind=taxable,
-            credit_base_per_ind=np.zeros_like(taxable),
-            direct_credits_per_ind=dtc,
+            nrtc_base_per_ind=np.zeros_like(taxable),
+            nrtc_direct_per_ind=dtc,
         )
         actual_revenue = cg.ts.get_aggregate("taxes_income")[-1]
         # The pools are assessed against the annual schedule, so the period is

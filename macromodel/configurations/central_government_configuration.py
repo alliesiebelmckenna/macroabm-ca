@@ -3,10 +3,7 @@ from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, Field
 
-# Unit declarations for tax-policy fields, read by ``country._scale_pit_policy``
-# to scale per-person statutory dollars to agent units. Only "currency" is
-# scaled; "dimensionless" and "years" are not. ``monetary_field_names`` enforces
-# this fail-closed, so a new numeric field must declare its unit.
+# Unit declarations read by country._scale_pit_policy; only currency is scaled.
 CURRENCY = {"unit": "currency"}
 DIMENSIONLESS = {"unit": "dimensionless"}
 YEARS = {"unit": "years"}
@@ -66,20 +63,74 @@ class TaxCreditDef(BaseModel):
 
     credit: str = Field(description="Human-readable credit name (e.g. 'Age Amount').")
     amount: float = Field(
-        default=0.0, ge=0.0, json_schema_extra=CURRENCY,
+        default=0.0,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Base dollar amount.",
     )
     eligibility_age_min: Optional[int] = Field(
-        default=None, json_schema_extra=YEARS,
+        default=None,
+        json_schema_extra=YEARS,
         description="Minimum age (e.g. 65 for Age Amount).",
     )
     clawback: Optional[float] = Field(
-        default=None, ge=0.0, json_schema_extra=CURRENCY,
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Income at which phaseout begins (own income for Age Amount, spouse for Spousal).",
     )
     top: Optional[float] = Field(
-        default=None, ge=0.0, json_schema_extra=CURRENCY,
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
         description="Income at which credit is fully eliminated.",
+    )
+
+
+class RefundableCreditDef(BaseModel):
+    """A single refundable tax credit component with eligibility rules.
+
+    Mirrors ``RefundableCreditComponent`` from the data layer. Dollar amounts
+    are per-person, as in ``TaxCreditDef``, so the same scaling seam converts
+    them to agent units.
+
+    Two fields have no non-refundable counterpart, and both carry behaviour:
+    ``delivery`` decides WHEN the money reaches the household, and
+    ``amount_basis`` decides how many times the amount is granted.
+    """
+
+    credit_name: str = Field(description="The instrument; components sharing it are summed before the taper.")
+    credit: str = Field(description="Eligibility class, e.g. 'Dependant Amount'.")
+    delivery: Literal["settlement", "instalments"] = Field(
+        description="'settlement' pays with the year-end settlement; 'instalments' "
+        "pays a quarter at each of four periods beginning at the filing."
+    )
+    amount: float = Field(
+        default=0.0,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
+        description="Credit value in per-person dollars.",
+    )
+    amount_basis: Literal["once", "per_dependant"] = Field(
+        default="once",
+        description="Multiplicity only; eligibility lives in `credit`.",
+    )
+    eligibility_age_min: Optional[int] = Field(
+        default=None,
+        json_schema_extra=YEARS,
+        description="Minimum age, where the class is age-gated.",
+    )
+    clawback: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        json_schema_extra=CURRENCY,
+        description="Income at which the taper begins.",
+    )
+    clawback_rate: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        json_schema_extra=DIMENSIONLESS,
+        description="Fraction of income above `clawback` that reduces the credit.",
     )
 
 
@@ -105,25 +156,21 @@ class CentralGovernmentFunctions(BaseModel):
 class CentralGovernmentConfiguration(BaseModel):
     functions: CentralGovernmentFunctions = CentralGovernmentFunctions()
 
-    # Per-government flag: each government opts in independently.
     activate_progressive_pit: bool = Field(
         default=False,
         description="Opt in to progressive PIT for this government, built from "
         "the country's taxation data. False keeps the flat Income Tax rate.",
     )
 
-    # When set, revenue is progressive but wage-setting and after-tax income keep
-    # using the scalar Income Tax rate (refreshed each period to actual / base).
+    # Revenue is progressive but wage-setting keeps using the scalar Income Tax rate.
     pit_brackets: Optional[list[tuple[float, float]]] = Field(
         default=None,
-        description="Progressive PIT brackets as (upper_bound, rate). "
-        "None means use the flat Income Tax rate.",
+        description="Progressive PIT brackets as (upper_bound, rate). None means use the flat Income Tax rate.",
     )
 
     pit_non_refundable_tax_credits: Optional[list[TaxCreditDef]] = Field(
         default=None,
-        description="List of non-refundable tax credits with eligibility rules. "
-        "None means no credits applied.",
+        description="List of non-refundable tax credits with eligibility rules. None means no credits applied.",
     )
 
     pit_year_end_reconciliation: bool = Field(
@@ -134,6 +181,33 @@ class CentralGovernmentConfiguration(BaseModel):
         "which leaves a taxpayer whose income varied having paid the wrong amount.",
     )
 
+    pit_refundable_tax_credits: Optional[list[RefundableCreditDef]] = Field(
+        default=None,
+        description="Refundable credit components for the run's jurisdiction. "
+        "None means no refundable credit is granted. Unlike the non-refundable "
+        "list this is government EXPENDITURE at its full amount, not revenue "
+        "foregone, and it is never floored at zero.",
+    )
+
+    pit_credits_at_filing: bool = Field(
+        default=True,
+        description="Withhold GROSS each period and apply the non-refundable and "
+        "dividend credits once, at the year-end filing, on the year's actual "
+        "income. False keeps the legacy behaviour of netting an averaged credit "
+        "off every period, which mis-states any credit that tapers with income. "
+        "Requires a filing to actually execute: progressive PIT active AND "
+        "pit_year_end_reconciliation on, or the credits are granted nowhere.",
+    )
+
+    pit_investment_at_year_end: bool = Field(
+        default=True,
+        description="Withhold on EMPLOYMENT income only each period and assess "
+        "rental, financial and dividend income once, at the year-end filing. "
+        "Mirrors how these are actually taxed: nobody is paid investment income "
+        "on a withholding schedule. False withholds against the full base every "
+        "period, the legacy behaviour. Requires a filing to actually execute.",
+    )
+
     couple_rental_income_split: float = Field(
         default=0.5,
         ge=0.0,
@@ -142,9 +216,7 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Share of couple rental income to higher earner (0.5 = 50/50).",
     )
 
-    # Dividend integration (off for parity). The defaults below are 2014 BC
-    # values; a real run sources the rates from the dividend schedule CSV via
-    # build_central_government_configuration, not the YAML.
+    # Defaults are 2014 BC values; a real run sources these from the dividend schedule CSV.
     pit_dividend_integration: bool = Field(
         default=False,
         description="Enable Canadian dividend gross-up + dividend tax credit for firm and bank dividends.",
@@ -189,4 +261,3 @@ class CentralGovernmentConfiguration(BaseModel):
         json_schema_extra=DIMENSIONLESS,
         description="BC dividend tax credit on the grossed-up other-than-eligible dividend (2014: 0.0259).",
     )
-

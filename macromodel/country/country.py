@@ -43,16 +43,20 @@ from macromodel.agents.agent import Agent
 from macromodel.agents.banks.banks import Banks
 from macromodel.agents.central_bank.central_bank import CentralBank
 from macromodel.agents.central_government.central_government import (
-    CentralGovernment,
     PIT_PER_YEAR_SCALARS,
+    CentralGovernment,
     pit_credit_defs_to_state_dicts,
+    pit_refundable_defs_to_state_dicts,
 )
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     annualize_pit_context,
+    assert_pooled_streams_are_scaled,
     build_credit_base_pool,
     build_dividend_tax_items,
+    build_refundable_credit_pools,
     build_taxable_income_pool,
+    build_withheld_income_pool,
 )
 from macromodel.agents.firms import Firms
 from macromodel.agents.government_entities.government_entities import GovernmentEntities
@@ -85,9 +89,7 @@ def _scaled_tax_credit(credit: TaxCreditDef, scale: int) -> TaxCreditDef:
     return credit.model_copy(update=updates)
 
 
-def _scale_pit_policy(
-    config: CentralGovernmentConfiguration, scale: int
-) -> CentralGovernmentConfiguration:
+def _scale_pit_policy(config: CentralGovernmentConfiguration, scale: int) -> CentralGovernmentConfiguration:
     """Return a copy of *config* with every PIT policy dollar scaled to agent units.
 
     The single seam converting per-person statutory dollars (brackets and credit
@@ -100,12 +102,15 @@ def _scale_pit_policy(
 
     updates: dict = {}
     if config.pit_brackets is not None:
-        updates["pit_brackets"] = [
-            (upper * scale, rate) for upper, rate in config.pit_brackets
-        ]
+        updates["pit_brackets"] = [(upper * scale, rate) for upper, rate in config.pit_brackets]
     if config.pit_non_refundable_tax_credits is not None:
         updates["pit_non_refundable_tax_credits"] = [
             _scaled_tax_credit(credit, scale) for credit in config.pit_non_refundable_tax_credits
+        ]
+    # Per-person dollars like the non-refundable ones; the field-level unit guard does not reach schedule rows.
+    if config.pit_refundable_tax_credits is not None:
+        updates["pit_refundable_tax_credits"] = [
+            _scaled_tax_credit(credit, scale) for credit in config.pit_refundable_tax_credits
         ]
     for name in monetary_field_names(type(config)):
         value = getattr(config, name)
@@ -158,6 +163,11 @@ def _build_pit_schedule_by_year(
             fragment["pit_non_refundable_tax_credits"] = pit_credit_defs_to_state_dicts(
                 config_year.pit_non_refundable_tax_credits
             )
+        # These move every published year; omitting them freezes the credit at the construction year.
+        if config_year.pit_refundable_tax_credits is not None:
+            fragment["pit_refundable_tax_credits"] = pit_refundable_defs_to_state_dicts(
+                config_year.pit_refundable_tax_credits
+            )
         for name in PIT_PER_YEAR_SCALARS:
             value = getattr(config_year, name, None)
             if value is not None:
@@ -170,9 +180,7 @@ def _build_pit_schedule_by_year(
     return table
 
 
-def _precalibrate_income_tax(
-    central_government, taxable_pool, credit_pool, country_name: str
-) -> None:
+def _precalibrate_income_tax(central_government, taxable_pool, credit_pool, country_name: str) -> None:
     """Set the t=0 effective Income Tax rate from the assembled pools.
 
     Pre-calibration only removes the first-period calibration shock; it is not
@@ -183,9 +191,7 @@ def _precalibrate_income_tax(
     NaN.
     """
     if np.isfinite(taxable_pool).all() and np.isfinite(credit_pool).all():
-        central_government.compute_pit(
-            taxable_pool, credit_pool, steps_per_year=steps_per_year()
-        )
+        central_government.compute_pit(taxable_pool, credit_pool, steps_per_year=steps_per_year())
     else:
         logging.warning(
             "%s: PIT pre-calibration skipped — the construction income pool "
@@ -456,8 +462,7 @@ class Country:
 
         n_unemployed = (individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED).sum()
 
-        # Layer the progressive PIT schedule onto the config when opted in, then
-        # scale its policy dollars to agent units.
+        # Layer the progressive schedule on when opted in, then scale its dollars to agent units.
         central_government_config = activate_taxation(
             base_config=country_configuration.central_government,
             taxation_reader=synthetic_country.taxation,
@@ -485,8 +490,7 @@ class Country:
         if pit_schedule_by_year:
             central_government.states["pit_schedule_by_year"] = pit_schedule_by_year
 
-        # Pre-calibrate states["Income Tax"] to the schedule-implied effective
-        # rate so the first period carries no t=0 calibration shock.
+        # Pre-calibrate the effective rate so the first period carries no t=0 shock.
         pit_uppers = central_government.states.get("pit_uppers")
         pit_rates = central_government.states.get("pit_rates")
         if pit_uppers is not None and pit_rates is not None:
@@ -495,9 +499,7 @@ class Country:
 
             pit_ctx = PitContext(
                 employee_income=individuals.states["Employee Income"],
-                employee_si_rate=float(
-                    central_government.states["Employee Social Insurance Tax"]
-                ),
+                employee_si_rate=float(central_government.states["Employee Social Insurance Tax"]),
                 individuals_age=ind_ages,
                 individuals_corr_households=ind_corr_hh,
                 households_type=households.states.get("Type"),
@@ -510,22 +512,12 @@ class Country:
                 taxable_pool,
                 pit_ctx,
             )
-            _precalibrate_income_tax(
-                central_government, taxable_pool, credit_pool, country_name
-            )
+            _precalibrate_income_tax(central_government, taxable_pool, credit_pool, country_name)
 
-        # Both the schedule table and the effective rate compute_pit just set
-        # were written after ``Agent.__init__`` snapshotted ``initial_states``,
-        # so ``reset()`` would restore a government with neither: the pre-hook
-        # would find no table and hold the construction year's brackets for the
-        # whole run, and the rate would revert to the flat one this block exists
-        # to replace. Fold them into the snapshot so a reset run is the same
-        # model as a fresh one.
+        # Written after Agent.__init__ snapshotted initial_states, so fold them in or reset() loses both.
         for key in ("pit_schedule_by_year", "Income Tax"):
             if key in central_government.states:
-                central_government.initial_states[key] = deepcopy(
-                    central_government.states[key]
-                )
+                central_government.initial_states[key] = deepcopy(central_government.states[key])
 
         government_entities = GovernmentEntities.from_pickled_agent(
             synthetic_government_entities=synthetic_country.government_entities,
@@ -912,8 +904,10 @@ class Country:
                 corr_households=self.individuals.states["Corresponding Household ID"],
             )
         )
+        # Expected leg: realised-only would have households never anticipating money they do receive.
         self.households.ts.expected_income_social_transfers.append(
-            self.households.compute_expected_social_transfer_income(
+            self._rtc_per_household()
+            + self.households.compute_expected_social_transfer_income(
                 total_other_social_transfers=self.central_government.ts.current("total_other_benefits")[0],
                 cpi=self.economy.ts.current("cpi")[0],
                 expected_inflation=self.economy.ts.current("estimated_cpi_inflation")[0],
@@ -1165,6 +1159,26 @@ class Country:
             assume_zero_growth=self.assume_zero_growth,
             assume_zero_noise=self.assume_zero_noise,
         )
+
+    def _rtc_per_household(self) -> "np.ndarray":
+        """This period's refundable credit, aggregated to households.
+
+        The government computes the credit PER INDIVIDUAL, because eligibility
+        is individual and the claimant is a person. Households are what the
+        transfer machinery pays, so the two are joined here, once.
+
+        Returns zeros when no refundable credit is active, so the callers add a
+        harmless term rather than branching.
+        """
+        n_hh = int(self.households.ts.current("n_households"))
+        paid = self.central_government.states.get("pit_rtc_paid_per_ind")
+        if paid is None or np.isscalar(paid):
+            return np.zeros(n_hh)
+        corr = np.asarray(self.individuals.states["Corresponding Household ID"]).astype(int)
+        paid = np.asarray(paid, dtype=float)
+        if len(paid) != len(corr):
+            return np.zeros(n_hh)
+        return np.bincount(corr, weights=paid, minlength=n_hh)[:n_hh]
 
     def update_realised_metrics(self) -> None:
         """Update realized economic outcomes after market clearing.
@@ -1444,8 +1458,10 @@ class Country:
             )
         )
         self.households.ts.total_income_employee.append([self.households.ts.current("income_employee").sum()])
+        # Rides the transfer wiring but not its allocation, so it reaches the entitled households; this series also books the expenditure.
         self.households.ts.income_social_transfers.append(
-            self.households.compute_social_transfer_income(
+            self._rtc_per_household()
+            + self.households.compute_social_transfer_income(
                 total_other_social_transfers=self.central_government.ts.current("total_other_benefits")[0],
                 cpi=self.economy.ts.current("cpi")[0],
             )
@@ -1577,8 +1593,7 @@ class Country:
             individuals_age=ind_ages,
         )
 
-        # Dividend integration (off by default): gross up firm and bank dividends
-        # for the taxable pool and build the dividend tax credits.
+        # Dividend integration (off by default): gross up the dividends and build their credits.
         grossed_up_dividend_per_ind = None
         dividend_tax_credit_per_ind = None
         if self.central_government.states.get("pit_dividend_integration", False):
@@ -1590,19 +1605,25 @@ class Country:
                 non_eligible_dtc_rate=float(self.central_government.states["dividend_non_eligible_dtc_rate"]),
             )
             # Annualized once here, so the gross-up and its credit are both annual.
-            gross_firm_dividend = self.individuals.compute_gross_firm_dividend(
-                firm_profits=self.firms.ts.current("profits"),
-                tau_firm=tau_firm,
-            ) * steps_per_year()
+            gross_firm_dividend = (
+                self.individuals.compute_gross_firm_dividend(
+                    firm_profits=self.firms.ts.current("profits"),
+                    tau_firm=tau_firm,
+                )
+                * steps_per_year()
+            )
             grossed_up_firm, dtc_firm = build_dividend_tax_items(
                 dividend_income=gross_firm_dividend,
                 small_business_share=float(self.central_government.states["dividend_small_business_share"]),
                 **gross_up_kwargs,
             )
-            gross_bank_dividend = self.individuals.compute_gross_bank_dividend(
-                bank_profits=self.banks.ts.current("profits"),
-                tau_firm=tau_firm,
-            ) * steps_per_year()
+            gross_bank_dividend = (
+                self.individuals.compute_gross_bank_dividend(
+                    bank_profits=self.banks.ts.current("profits"),
+                    tau_firm=tau_firm,
+                )
+                * steps_per_year()
+            )
             grossed_up_bank, dtc_bank = build_dividend_tax_items(
                 dividend_income=gross_bank_dividend,
                 small_business_share=float(self.central_government.states["bank_dividend_small_business_share"]),
@@ -1613,25 +1634,23 @@ class Country:
 
         pit_ctx = PitContext(
             employee_income=self.individuals.ts.current("employee_income"),
-            employee_si_rate=float(
-                self.central_government.states["Employee Social Insurance Tax"]
-            ),
+            employee_si_rate=float(self.central_government.states["Employee Social Insurance Tax"]),
             rental_income=rental_income_per_individual,
             financial_income=financial_income_per_individual,
             grossed_up_dividend=grossed_up_dividend_per_ind,
             individuals_age=ind_ages,
             individuals_corr_households=ind_corr_hh,
             households_type=self.households.states.get("Type"),
+            households_tenure=self.households.states.get("Tenure Status of the Main Residence"),
         )
         # The grossed-up dividend is already annual; scale the raw streams.
         pit_ctx = annualize_pit_context(pit_ctx, steps_per_year())
+        # Fail closed if a pooled stream is scaled nowhere, which would understate it by the factor.
+        assert_pooled_streams_are_scaled(pit_ctx)
         taxable_income_per_ind = build_taxable_income_pool(pit_ctx)
-        credit_defs = self.central_government.states.get(
-            "pit_non_refundable_tax_credits"
-        )
-        credit_base_per_ind = build_credit_base_pool(
-            credit_defs, taxable_income_per_ind, pit_ctx
-        )
+        withheld_income_per_ind = build_withheld_income_pool(pit_ctx)
+        credit_defs = self.central_government.states.get("pit_non_refundable_tax_credits")
+        nrtc_base_per_ind = build_credit_base_pool(credit_defs, taxable_income_per_ind, pit_ctx)
 
         def annual_credit_base(annual_income_per_ind, year_credit_defs=None):
             """Value the credits at a year's income, for the year-end filing.
@@ -1642,6 +1661,20 @@ class Country:
             """
             return build_credit_base_pool(
                 credit_defs if year_credit_defs is None else year_credit_defs,
+                annual_income_per_ind,
+                pit_ctx,
+            )
+
+        refundable_defs = self.central_government.states.get("pit_refundable_tax_credits")
+
+        def annual_rtc(annual_income_per_ind, year_rtc_defs=None):
+            """Value the refundable credits at a year's income, at the filing.
+
+            Mirrors ``annual_credit_base``: the settled year's definitions when
+            the filing supplies them, this year's otherwise.
+            """
+            return build_refundable_credit_pools(
+                refundable_defs if year_rtc_defs is None else year_rtc_defs,
                 annual_income_per_ind,
                 pit_ctx,
             )
@@ -1663,9 +1696,11 @@ class Country:
             current_household_new_real_wealth=self.households.ts.current("investment"),
             current_total_exports=self.economy.ts.current("exports_before_taxes").sum(),
             taxable_income_per_ind=taxable_income_per_ind,
-            credit_base_per_ind=credit_base_per_ind,
-            direct_credits_per_ind=dividend_tax_credit_per_ind,
+            withheld_income_per_ind=withheld_income_per_ind,
+            nrtc_base_per_ind=nrtc_base_per_ind,
+            nrtc_direct_per_ind=dividend_tax_credit_per_ind,
             annual_credit_base=annual_credit_base,
+            annual_rtc=annual_rtc,
         )
 
         # General government fields

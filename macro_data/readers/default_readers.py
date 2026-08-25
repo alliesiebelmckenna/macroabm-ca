@@ -19,7 +19,8 @@ Key features:
 
 import re
 import warnings
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple
@@ -43,7 +44,6 @@ from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
 from macro_data.readers.emissions.emissions_reader import CH4EmissionsReaderCAN, EmissionsReader
 from macro_data.readers.exo_prices.exo_prices_reader import SectorExoPricesReader
-from macro_data.readers.taxation import TaxationDataWarning, TaxationStore
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
     get_investment_fractions,
@@ -60,6 +60,7 @@ from macro_data.readers.population_data.compustat_firms_reader import (
 )
 from macro_data.readers.population_data.hfcs_reader import HFCSReader
 from macro_data.readers.socioeconomic_data.wiod_sea_data import WIODSEAReader
+from macro_data.readers.taxation import TaxationDataWarning, TaxationStore
 from macro_data.readers.util.prune_util import DataFilterWarning
 
 
@@ -118,15 +119,9 @@ class DataPaths:
     emissions_fraction_path: Optional[Path] = None
     firm_prices_path: Optional[Path] = None
     ch4_emissions_path: Optional[Path] = None
-    # Taxation schedule directory (optional); when absent, progressive PIT stays
-    # inactive. Loaded by from_raw_data via _load_taxation_reader.
+    # Optional; when absent, progressive PIT stays inactive.
     taxation_path: Optional[Path] = None
-    # Which schedule files to read inside taxation_path / "personal_income_tax".
-    # Defaults to the canonical filenames; override to read an alternative data
-    # source in the same schema. The jurisdictions covered by the bracket file
-    # are the governments that can run a progressive PIT — so pointing this at a
-    # BC-only file taxes BC progressively and leaves every other province flat,
-    # and pointing it at an all-province file activates them all. No code change.
+    # Filename overrides for the schedule files; jurisdictions come from the data, not the names.
     taxation_filenames: dict[str, str] = dataclass_field(default_factory=dict)
 
     @classmethod
@@ -517,9 +512,7 @@ class DataReaders:
         if datapaths.ch4_emissions_path is not None and datapaths.ch4_emissions_path.exists():
             ch4_emissions = CH4EmissionsReaderCAN.read_data(datapaths.ch4_emissions_path)
 
-        taxation = _load_taxation_reader(
-            datapaths.taxation_path, datapaths.taxation_filenames
-        )
+        taxation = _load_taxation_reader(datapaths.taxation_path, datapaths.taxation_filenames)
 
         return cls(
             icio=icio,
@@ -791,8 +784,7 @@ class DataReaders:
         return weights_by_income
 
 
-# Subdirectory holding the personal-income-tax schedules, relative to the
-# taxation root; mirrors the reader package layout.
+# Subdirectory holding the PIT schedules, mirroring the reader package layout.
 _PIT_SUBDIR = "personal_income_tax"
 
 
@@ -832,8 +824,7 @@ def _load_taxation_reader(
     try:
         return TaxationStore.from_dir(pit_dir, **(filenames or {}))
     except FileNotFoundError as error:
-        # Subdirectory exists but a required schedule file does not; warn and
-        # fall back to the flat-tax setup as above.
+        # A required schedule file is missing: warn and fall back to the flat-tax setup.
         warnings.warn(
             f"A taxation schedule directory exists at {pit_dir} but a required "
             f"schedule file is missing; taxation is disabled (progressive PIT "

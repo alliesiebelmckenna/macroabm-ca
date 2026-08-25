@@ -8,7 +8,7 @@ tax policy.
 import numpy as np
 import pytest
 
-from macromodel.agents.central_government.pit_pools import (
+from macromodel.agents.central_government.func.pit_pools import (
     PitContext,
     build_credit_base_pool,
     build_dividend_tax_items,
@@ -24,7 +24,6 @@ _NONELIG_DTC = 0.0259
 
 
 class TestTaxableIncomePool:
-
     def test_streams_stack_additively(self):
         """Each income stream contributes to the same pool (so the
         progressive brackets later apply once to the combined total)."""
@@ -36,7 +35,6 @@ class TestTaxableIncomePool:
         )
         pool = build_taxable_income_pool(ctx)
         np.testing.assert_allclose(pool, [111.0, 222.0])
-
 
 
 class TestTargetedCreditsRequireContext:
@@ -53,27 +51,26 @@ class TestTargetedCreditsRequireContext:
     def test_age_amount_without_age_context_is_zero(self):
         ctx = self._bare_ctx()
         taxable = build_taxable_income_pool(ctx)
-        credit_defs = [{
-            "credit": "Age Amount", "amount": 4426.0, "age_min": 65,
-            "clawback": 32943.0, "top": 62450.0,
-        }]
+        credit_defs = [
+            {
+                "credit": "Age Amount",
+                "amount": 4426.0,
+                "age_min": 65,
+                "clawback": 32943.0,
+                "top": 62450.0,
+            }
+        ]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_array_equal(base, [0.0, 0.0])
 
 
-
-
-
 class TestCreditBasePool:
-
     def test_universal_credit_applies_to_all(self):
         taxable = np.array([100.0, 200.0])
         ctx = PitContext(employee_income=taxable, employee_si_rate=0.0)
         credit_defs = [{"credit": "Personal Amount", "amount": 9869.0}]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         np.testing.assert_allclose(base, [9869.0, 9869.0])
-
-
 
     def test_equivalent_to_spouse_amount_single_parent_only(self):
         """The eligible-dependant credit applies only to single parents.
@@ -93,7 +90,7 @@ class TestCreditBasePool:
             households_type=np.array(
                 [
                     HouseholdType.SINGLE_PARENT_WITH_CHILDREN,  # hh0 = single parent
-                    HouseholdType.ONE_ADULT_YOUNGER_THAN_64,    # hh1 = single adult
+                    HouseholdType.ONE_ADULT_YOUNGER_THAN_64,  # hh1 = single adult
                 ],
                 dtype=object,
             ),
@@ -102,7 +99,6 @@ class TestCreditBasePool:
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         # Only the single parent (ind0) is eligible.
         np.testing.assert_allclose(base, [12000.0, 0.0, 0.0])
-
 
     def test_age_amount_only_for_eligible_age_with_clawback(self):
         """Age Amount applies only to age >= age_min, even when a clawback
@@ -114,14 +110,18 @@ class TestCreditBasePool:
             employee_si_rate=0.0,
             individuals_age=np.array([40, 70]),
         )
-        credit_defs = [{
-            "credit": "Age Amount", "amount": 4426.0,
-            "age_min": 65, "clawback": 32943.0, "top": 62450.0,
-        }]
+        credit_defs = [
+            {
+                "credit": "Age Amount",
+                "amount": 4426.0,
+                "age_min": 65,
+                "clawback": 32943.0,
+                "top": 62450.0,
+            }
+        ]
         base = build_credit_base_pool(credit_defs, taxable, ctx)
         expected_70 = 4426.0 - (40000.0 - 32943.0) * 4426.0 / (62450.0 - 32943.0)
         np.testing.assert_allclose(base, [0.0, expected_70], rtol=1e-6)
-
 
 
 class TestSpousalAmountGrouping:
@@ -140,12 +140,11 @@ class TestSpousalAmountGrouping:
             households_type=np.array(
                 [
                     HouseholdType.TWO_ADULTS_YOUNGER_THAN_65,  # household 0 = couple
-                    HouseholdType.ONE_ADULT_YOUNGER_THAN_64,   # household 1 = single
+                    HouseholdType.ONE_ADULT_YOUNGER_THAN_64,  # household 1 = single
                 ],
                 dtype=object,
             ),
         )
-
 
     def test_spousal_pairs_adults_ignoring_children(self):
         """A couple-with-children household has 4 individuals (2 adults + 2
@@ -159,9 +158,7 @@ class TestSpousalAmountGrouping:
             employee_si_rate=0.0,
             individuals_age=np.array([40, 38, 10, 8]),
             individuals_corr_households=np.array([0, 0, 0, 0]),
-            households_type=np.array(
-                [HouseholdType.TWO_ADULTS_WITH_TWO_CHILDREN], dtype=object
-            ),
+            households_type=np.array([HouseholdType.TWO_ADULTS_WITH_TWO_CHILDREN], dtype=object),
         )
         taxable = build_taxable_income_pool(ctx)  # [50000, 5000, 0, 0]
 
@@ -171,8 +168,6 @@ class TestSpousalAmountGrouping:
         # Adults are paired: ind0 spouse=5000 → 12000-5000=7000;
         # ind1 spouse=50000 → 0. Children get no credit.
         np.testing.assert_allclose(base, [7000.0, 0.0, 0.0, 0.0])
-
-
 
 
 class TestDividendTaxItems:
@@ -196,13 +191,6 @@ class TestDividendTaxItems:
         np.testing.assert_allclose(dtc, [4.13058])
 
 
-
-
-
-
-
-
-
 class TestUnmappedCreditFailClosed:
     """A credit kind with no runtime branch must contribute zero — never fall
     through to a universal grant (defence in depth behind the builder's
@@ -217,18 +205,21 @@ class TestUnmappedCreditFailClosed:
 
     def test_unknown_kind_contributes_zero(self):
         credit_defs = [{"credit": "Disability Amount", "amount": 8000.0}]
-        pool = build_credit_base_pool(
-            credit_defs, np.array([50000.0, 20000.0]), self._ctx()
-        )
+        pool = build_credit_base_pool(credit_defs, np.array([50000.0, 20000.0]), self._ctx())
         np.testing.assert_array_equal(pool, [0.0, 0.0])
 
 
 # Published BC 2014 amounts, from non_refundable_tax_credits.csv.
 _SPOUSAL_2014 = {
-    "credit": "Spousal Amount", "amount": 8450.0, "clawback": 845.0, "top": 9295.0,
+    "credit": "Spousal Amount",
+    "amount": 8450.0,
+    "clawback": 845.0,
+    "top": 9295.0,
 }
 _ETS_2014 = {
-    "credit": "Equivalent To Spouse Amount", "amount": 8450.0, "top": 9295.0,
+    "credit": "Equivalent To Spouse Amount",
+    "amount": 8450.0,
+    "top": 9295.0,
 }
 
 
@@ -253,7 +244,8 @@ class TestSpousalAmountHonoursItsSchedule:
 
         # Spouse earns 500, inside the published 845 exemption.
         ctx = _household_ctx(
-            [40000.0, 500.0], [45, 43],
+            [40000.0, 500.0],
+            [45, 43],
             HouseholdType.TWO_ADULTS_YOUNGER_THAN_65,
         )
         taxable = build_taxable_income_pool(ctx)
@@ -272,7 +264,8 @@ class TestCoupleWithAnAdditionalAdult:
 
         # Two spouses plus an 18-year-old still at home.
         ctx = _household_ctx(
-            [0.0, 60000.0, 0.0], [45, 43, 18],
+            [0.0, 60000.0, 0.0],
+            [45, 43, 18],
             HouseholdType.TWO_ADULTS_WITH_ONE_CHILD,
         )
         taxable = build_taxable_income_pool(ctx)
@@ -293,7 +286,8 @@ class TestEquivalentToSpouseEligibility:
         from macromodel.agents.households.household_properties import HouseholdType
 
         ctx = _household_ctx(
-            [40000.0, 0.0], [45, 10],
+            [40000.0, 0.0],
+            [45, 10],
             HouseholdType.SINGLE_PARENT_WITH_CHILDREN,
         )
         taxable = build_taxable_income_pool(ctx)
@@ -306,10 +300,10 @@ class TestEquivalentToSpouseEligibility:
         # BC 2014 publishes ETS as amount 8450 / top 9295, i.e. an implied 845
         # exemption. A minor earning 2000 reduces the parent's claim by 1155.
         ctx = _household_ctx(
-            [40000.0, 2000.0], [45, 16],
+            [40000.0, 2000.0],
+            [45, 16],
             HouseholdType.SINGLE_PARENT_WITH_CHILDREN,
         )
         taxable = build_taxable_income_pool(ctx)
         base = build_credit_base_pool([_ETS_2014], taxable, ctx)
         np.testing.assert_allclose(base, [8450.0 - (2000.0 - 845.0), 0.0])
-

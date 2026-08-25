@@ -27,9 +27,7 @@ from macro_data.readers.taxation import TaxationStore
 
 # Committed schedules (BC + CA federal).
 #   parents[0]=test_processing [1]=unit [2]=test_macro_data [3]=tests [4]=repo root
-_COMMITTED_PIT_DIR = (
-    Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
-)
+_COMMITTED_PIT_DIR = Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax"
 
 
 @pytest.fixture(scope="module")
@@ -113,9 +111,7 @@ def test_the_data_file_decides_who_is_taxed_progressively(tmp_path):
             for y in sorted(rates["year"].unique())
         ]
     )
-    pd.concat([rates, extra], ignore_index=True).to_csv(
-        pit_dir / "rates_thresholds_all_provinces.csv", index=False
-    )
+    pd.concat([rates, extra], ignore_index=True).to_csv(pit_dir / "rates_thresholds_all_provinces.csv", index=False)
 
     narrow = TaxationStore.from_dir(pit_dir)
     assert taxation_for_country("CAN_BC", narrow) is not None

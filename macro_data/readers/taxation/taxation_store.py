@@ -98,7 +98,5 @@ class TaxationStore:
         if juris not in self.jurisdictions:
             return None
         if juris not in self._cache:
-            self._cache[juris] = TaxationReader.from_paths(
-                self.paths, jurisdiction=juris
-            )
+            self._cache[juris] = TaxationReader.from_paths(self.paths, jurisdiction=juris)
         return self._cache[juris]

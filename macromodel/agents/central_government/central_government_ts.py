@@ -55,9 +55,13 @@ def create_central_government_timeseries(
         taxes_corporate_income=[data["Corporate Taxes"].values[0]],
         taxes_exports=[data["Export Taxes"].values[0]],
         taxes_income=[data["Income Taxes"].values[0]],
-        # The year-end settlement, already inside taxes_income and zero except at a
-        # filing. Negative is a refund paid out, positive a collection received.
+        # Zero except at a filing; negative is a refund, positive a collection.
         pit_year_end_settlement=[0.0],
+        # Expenditure at full value, kept out of taxes_income; two series because the two delivery paths refer to different years.
+        pit_rtc_settlement=[0.0],
+        pit_rtc_instalments=[0.0],
+        # Revenue foregone to the non-refundable credits: reported, never booked.
+        pit_non_refundable_credits_granted=[0.0],
         taxes_rental_income=[data["Rental Income Taxes"].values[0]],
         taxes_employee_si=[data["Employee SI Tax"].values[0]],
         taxes_employer_si=[data["Employer SI Tax"].values[0]],

@@ -30,9 +30,7 @@ def _multiyear_csv(tmp_path) -> Path:
 class TestCreditStatutoryLookup:
     @staticmethod
     def _personal(sched, year):
-        return [
-            c for c in sched.get_credits(year=year) if c.credit == "Personal Amount"
-        ]
+        return [c for c in sched.get_credits(year=year) if c.credit == "Personal Amount"]
 
     def test_lookup_2015(self, tmp_path):
         sched = NRTCSchedule.from_csv(_multiyear_csv(tmp_path), jurisdiction="bc")
@@ -40,17 +38,11 @@ class TestCreditStatutoryLookup:
         assert len(comps) == 1  # only 2015's row, not all three years
         assert comps[0].amount == pytest.approx(9500)
 
-
-
-
     def test_consolidated_jurisdiction_format_loads_bc_rows(self):
         """The contributor's consolidated credit file loads BC rows cleanly."""
         sched = NRTCSchedule.from_name(
             "non_refundable_tax_credits.csv",
-            schedule_dir=Path(__file__).resolve().parents[4]
-            / "spoof_data"
-            / "freda"
-            / "personal_income_tax",
+            schedule_dir=Path(__file__).resolve().parents[4] / "spoof_data" / "freda" / "personal_income_tax",
             jurisdiction="bc",
         )
         comps = self._personal(sched, 2014)
