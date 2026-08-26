@@ -462,8 +462,14 @@ class CentralGovernment(Agent):
         # Taxes on exports
         self.ts.taxes_exports.append([self.states["Export Tax"] * current_total_exports])
 
-        # Total wages of employed individuals
-        tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
+        # Total wages of employed individuals, taken back to the gross wage. The wage setter
+        # returns take-home pay, so the levies below would otherwise fall on income from which
+        # they have already been deducted. The same denominator appears in the wage setter's own
+        # conversion, so it is non-zero wherever that conversion is well defined.
+        net_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
+        tot_wages_employed_ind = net_wages_employed_ind / (
+            (1 - self.states["Employee Social Insurance Tax"]) * (1 - self.states["Income Tax"])
+        )
 
         # Advanced once per period so the gated taxes share one year boundary; pre-calibration does not advance it.
         self.states["tax_step"] = int(self.states.get("tax_step", 0)) + 1
