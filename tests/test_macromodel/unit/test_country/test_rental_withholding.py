@@ -76,3 +76,76 @@ class TestRentalWithholding:
 
         booked = test_country.central_government.ts.current("taxes_rental_income")[0]
         assert test_country._rent_received_gross_up() == booked
+
+
+class _Captured(Exception):
+    """Raised by a spy once it has recorded the argument, to stop the method there."""
+
+
+def _property_frame() -> pd.DataFrame:
+    """The property frame in the shape ``country.py`` consumes it from the housing market.
+
+    ``HousingMarket.from_data`` — what the shared fixture uses — leaves ``states`` a bare
+    frame, while the pickled constructor the model runs on nests it under ``properties``.
+    The call sites read the nested form, so that is the form to hand them.
+    """
+    frame = pd.DataFrame(
+        {
+            "House ID": np.array([0, 1, 2], dtype=int),
+            "Value": np.array([100_000.0, 100_000.0, 100_000.0]),
+            "Rent": np.array([RENT, RENT, RENT]),
+            "Corresponding Owner Household ID": np.array([0, 1, 0], dtype=int),
+            "Corresponding Inhabitant Household ID": np.array([2, 3, 0], dtype=int),
+            "Is Owner-Occupied": np.array([0, 0, 1], dtype=int),
+        }
+    )
+    frame.rename_axis("Properties", inplace=True)
+    frame["Sale Price"] = frame["Value"]
+    frame["Newly on the Rental Market"] = False
+    frame["Up for Rent"] = False
+    frame["Temporarily for Sale"] = False
+    return frame
+
+
+def _withholding_reaching(country, monkeypatch, method_name: str) -> float:
+    """Run ``method_name`` and return the rate its call site actually passed on."""
+    monkeypatch.setattr(
+        country.housing_market,
+        "states",
+        {"properties": _property_frame(), "current_sales": pd.DataFrame()},
+    )
+    seen = {}
+
+    def spy(housing_data, income_taxes):
+        seen["income_taxes"] = income_taxes
+        raise _Captured
+
+    monkeypatch.setattr(country.households, "compute_rental_income", spy)
+    with pytest.raises(_Captured):
+        getattr(country, method_name)()
+    return seen["income_taxes"]
+
+
+class TestRentalWithholdingIsWiredIn:
+    """The call sites, not the helpers.
+
+    The tests above hand a rate to ``compute_rental_income`` themselves, so they hold
+    whether or not ``country.py`` consults the gate at all: reverting both call sites to
+    ``states["Income Tax"]`` leaves every one of them green. These drive the real methods
+    and read back what the call site passed.
+    """
+
+    @pytest.mark.parametrize("method_name", ["update_planning_metrics", "update_realised_metrics"])
+    def test_progressive_path_withholds_nothing_at_either_call_site(
+        self, test_country, monkeypatch, method_name
+    ):
+        _set_progressive(test_country, True)
+
+        assert _withholding_reaching(test_country, monkeypatch, method_name) == 0.0
+
+    @pytest.mark.parametrize("method_name", ["update_planning_metrics", "update_realised_metrics"])
+    def test_flat_path_still_withholds_at_either_call_site(self, test_country, monkeypatch, method_name):
+        _set_progressive(test_country, False)
+        income_tax = test_country.central_government.states["Income Tax"]
+
+        assert _withholding_reaching(test_country, monkeypatch, method_name) == income_tax
