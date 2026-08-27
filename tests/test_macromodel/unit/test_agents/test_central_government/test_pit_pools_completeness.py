@@ -38,7 +38,10 @@ class TestPooledStreamsAreScaled:
 
 
 class TestWithheldPool:
-    def test_is_employment_only_and_net_of_the_si_levy(self):
+    def test_is_employment_only(self):
+        # Rental and financial income are assessed at the filing, never withheld against. The
+        # employment figure is the pay as given: the wage setter has already withheld the
+        # social-insurance levy, so the pool does not deduct it a second time.
         ctx = _ctx(rental_income=np.full(N, 5000.0), financial_income=np.full(N, 1000.0))
         withheld = build_withheld_income_pool(ctx)
-        assert withheld == pytest.approx(np.full(N, 40000.0 * 0.95))
+        assert withheld == pytest.approx(np.full(N, 40000.0))

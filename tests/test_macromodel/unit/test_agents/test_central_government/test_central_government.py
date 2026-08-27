@@ -96,8 +96,9 @@ class TestCentralGovernmentPIT:
             nrtc_base_per_ind=credits,
         )
 
-        # Recompute the expected effective rate from the tax paid
-        taxable = emp_income * (1 - cg.states["Employee Social Insurance Tax"])
+        # Recompute the expected effective rate from the tax paid. Employment income reaches the
+        # pool already net of the social-insurance levy, withheld by the wage setter.
+        taxable = emp_income
         pit = compute_personal_income_tax(
             taxable,
             cg.states["pit_uppers"],

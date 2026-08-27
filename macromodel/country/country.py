@@ -829,7 +829,7 @@ class Country:
                 current_individual_offered_wage=self.individuals.states["Offered Wage of Accepted Job"],
                 labour_inputs_from_employees=labour_inputs_from_employees,
                 estimated_ppi_inflation=self.economy.ts.current("estimated_ppi_inflation")[0],
-                income_taxes=self.central_government.states["Income Tax"],
+                income_taxes=self._wage_income_tax_rate(),
                 employee_social_insurance_tax=self.central_government.states["Employee Social Insurance Tax"],
                 employer_social_insurance_tax=self.central_government.states["Employer Social Insurance Tax"],
             )
@@ -923,6 +923,8 @@ class Country:
         self.households.ts.expected_income_financial_assets.append(
             self.households.compute_expected_income_from_financial_assets()
         )
+        # Appended once per step and read by both income legs; appending in each would double it.
+        self.households.ts.income_pit_withheld.append(self._pit_withheld_per_household())
         self.households.ts.expected_income.append(self.households.compute_expected_income())
 
         # Household target consumption
@@ -1180,6 +1182,29 @@ class Country:
             return np.zeros(n_hh)
         return np.bincount(corr, weights=paid, minlength=n_hh)[:n_hh]
 
+    def _pit_withheld_per_household(self) -> "np.ndarray":
+        """The period's PIT withholding, aggregated to households and signed as INCOME.
+
+        Always negative or zero: this is money withheld from pay. Returned as an income term so
+        the callers add it like any other, and zeros on the flat path, where the wage setter
+        withholds instead and nothing is owed here.
+
+        It joins BOTH the expected and the realised leg, unlike the filing settlement: a
+        household knows what comes out of its pay when it plans, so this reaches the consumption
+        decision. Like the refundable credit and the settlement, it carries the period's lag --
+        ``compute_taxes`` runs at the end of the step, so the value read here is the previous
+        step's.
+        """
+        n_hh = int(self.households.ts.current("n_households"))
+        withheld = self.central_government.states.get("pit_withheld_per_ind")
+        if withheld is None or np.isscalar(withheld):
+            return np.zeros(n_hh)
+        corr = np.asarray(self.individuals.states["Corresponding Household ID"]).astype(int)
+        withheld = np.asarray(withheld, dtype=float)
+        if len(withheld) != len(corr):
+            return np.zeros(n_hh)
+        return -np.bincount(corr, weights=withheld, minlength=n_hh)[:n_hh]
+
     def _pit_settlement_per_household(self) -> "np.ndarray":
         """The year-end filing settlement, aggregated to households and signed as INCOME.
 
@@ -1350,7 +1375,7 @@ class Country:
         self.firms.update_total_wages_paid(
             corresponding_firm=self.individuals.states["Corresponding Firm ID"],
             individual_wages=self.individuals.ts.current("employee_income"),
-            income_taxes=self.central_government.states["Income Tax"],
+            income_taxes=self._wage_income_tax_rate(),
             employee_social_insurance_tax=self.central_government.states["Employee Social Insurance Tax"],
             employer_social_insurance_tax=self.central_government.states["Employer Social Insurance Tax"],
             cpi=self.economy.ts.current("cpi")[0],
@@ -1780,6 +1805,22 @@ class Country:
             central_government_rent_received=self.central_government.ts.current("total_rent_received")[0],
             running_multiple_countries=self.running_multiple_countries,
         )
+
+    def _wage_income_tax_rate(self) -> float:
+        """Income-tax rate the wage setter withholds from pay.
+
+        Zero on the progressive path: the flat effective rate is a wage-setting quantity and has
+        no counterpart in the tax system, so the PIT pool's own withholding is the only one. The
+        flat path keeps it, where it is the tax.
+
+        Both consumers must read this, not the raw rate. ``set_employee_income`` and
+        ``update_total_wages_paid`` divide by the same factor, so if only one drops the income
+        tax, ``total_wage`` stops equalling employer cost and the compensation-of-employees leg
+        of GDP moves with it.
+        """
+        if self.central_government.progressive_pit_active:
+            return 0.0
+        return self.central_government.states["Income Tax"]
 
     def _rental_withholding_rate(self) -> float:
         """Rate withheld from rent at the point of transaction.

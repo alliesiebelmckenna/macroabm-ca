@@ -57,9 +57,10 @@ def _rates(government) -> tuple[float, float, float]:
 class TestPayrollLevyBaseOnTheProgressivePath:
     def test_social_insurance_sits_on_the_gross_wage_when_progressive(self, test_central_government):
         government = test_central_government
-        income_tax, employee_si, employer_si = _rates(government)
+        _income_tax, employee_si, employer_si = _rates(government)
         gross = EMPLOYER_COST / (1 + employer_si)
-        net = gross * (1 - employee_si) * (1 - income_tax)
+        # On this path the wage setter withholds social insurance only, so pay is gross net of it.
+        net = gross * (1 - employee_si)
         _set_progressive(government, True)
 
         _levy(government, net)
@@ -67,26 +68,24 @@ class TestPayrollLevyBaseOnTheProgressivePath:
         assert government.ts.current("taxes_employee_si")[0] == pytest.approx(employee_si * gross)
         assert government.ts.current("taxes_employer_si")[0] == pytest.approx(employer_si * gross)
 
-    def test_the_social_insurance_base_does_not_depend_on_the_path(self, test_central_government):
+    def test_the_base_is_the_gross_wage_on_whichever_path(self, test_central_government):
+        # The two paths no longer produce the same pay -- the flat one still withholds income tax
+        # and the progressive one does not -- so feeding one figure to both is meaningless. The
+        # invariant that survives is that each path grosses its own pay back to the same wage.
         government = test_central_government
         income_tax, employee_si, employer_si = _rates(government)
-        net = (EMPLOYER_COST / (1 + employer_si)) * (1 - employee_si) * (1 - income_tax)
+        gross = EMPLOYER_COST / (1 + employer_si)
 
         _set_progressive(government, False)
-        _levy(government, net)
-        flat = (
-            government.ts.current("taxes_employee_si")[0],
-            government.ts.current("taxes_employer_si")[0],
-        )
+        _levy(government, gross * (1 - employee_si) * (1 - income_tax))
+        flat = government.ts.current("taxes_employee_si")[0]
 
         _set_progressive(government, True)
-        _levy(government, net)
-        progressive = (
-            government.ts.current("taxes_employee_si")[0],
-            government.ts.current("taxes_employer_si")[0],
-        )
+        _levy(government, gross * (1 - employee_si))
+        progressive = government.ts.current("taxes_employee_si")[0]
 
-        assert progressive == pytest.approx(flat)
+        assert flat == pytest.approx(employee_si * gross)
+        assert progressive == pytest.approx(employee_si * gross)
 
     def test_income_tax_comes_from_the_pool_when_progressive(self, test_central_government):
         # The levy-site gross-up must not reach taxes_income on this path: the pool supplies it,

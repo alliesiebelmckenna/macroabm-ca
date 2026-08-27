@@ -467,14 +467,19 @@ class CentralGovernment(Agent):
         # they have already been deducted. The same denominator appears in the wage setter's own
         # conversion, so it is non-zero wherever that conversion is well defined.
         net_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
+        # What the wage setter withheld, and therefore what has to be added back: employee social
+        # insurance always, income tax only on the flat path, where the wage setter still takes it.
+        wage_income_tax = 0.0 if self.progressive_pit_active else self.states["Income Tax"]
         tot_wages_employed_ind = net_wages_employed_ind / (
-            (1 - self.states["Employee Social Insurance Tax"]) * (1 - self.states["Income Tax"])
+            (1 - self.states["Employee Social Insurance Tax"]) * (1 - wage_income_tax)
         )
 
         # Advanced once per period so the gated taxes share one year boundary; pre-calibration does not advance it.
         self.states["tax_step"] = int(self.states.get("tax_step", 0)) + 1
 
         # Personal income tax: progressive when a schedule is configured, else flat.
+        # Bound before the branch: the flat path never fills it but the store below reads it.
+        tax_per_ind: list = []
         settlement = 0.0  # only a filing on the progressive path makes this non-zero
         # Refundable credits are expenditure at full value, so they never net into taxes_income.
         rtc_settlement = 0.0
@@ -495,7 +500,6 @@ class CentralGovernment(Agent):
 
             # The pools arrive annualized; the same factor apportions the tax back.
             factor = steps_per_year()
-            tax_per_ind: list = []
             # Only the withholding narrows; the year's liability is still taken on the full base.
             withheld_pool = taxable_income_per_ind
             if self.states.get("pit_investment_at_year_end", False) and withheld_income_per_ind is not None:
@@ -538,6 +542,10 @@ class CentralGovernment(Agent):
 
         # Revenue foregone to the non-refundable credits: reported, never booked.
         self.ts.pit_non_refundable_credits_granted.append([float(sum(credit_granted))])
+
+        # Per individual, because the period's withholding leaves the pay of the individual it
+        # was computed on. Empty on the flat path, where the wage setter withholds instead.
+        self.states["pit_withheld_per_ind"] = tax_per_ind[0] if tax_per_ind else 0.0
 
         # Per individual, because the filing debits the household that underpaid, not the average.
         # Signed: positive means the household owes more at the filing.

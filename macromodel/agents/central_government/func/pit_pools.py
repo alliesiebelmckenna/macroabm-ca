@@ -106,8 +106,8 @@ def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
     """Pool A: total taxable income per individual.
 
     Each income stream contributes its taxable amount (after any stream-specific
-    adjustment such as the employee social-insurance offset or an inclusion
-    rate). The pooled total later flows through the progressive brackets exactly
+    adjustment such as an inclusion rate). Employment income arrives already net
+    of employee social insurance, withheld by the wage setter. The pooled total later flows through the progressive brackets exactly
     once. To add a new income stream, add one line here (and a field on
     ``PitContext``).
 
@@ -117,7 +117,9 @@ def build_taxable_income_pool(ctx: PitContext) -> np.ndarray:
     Returns:
         Taxable income per individual.
     """
-    pool = ctx.employee_income * (1.0 - ctx.employee_si_rate)
+    # The wage setter has already withheld employee social insurance, so the series arrives
+    # net of it and applying the offset again would deduct it twice.
+    pool = ctx.employee_income
 
     if ctx.rental_income is not None:
         pool = pool + ctx.rental_income
@@ -180,8 +182,9 @@ def build_withheld_income_pool(ctx: PitContext) -> np.ndarray:
     -- at the filing; only the per-period withholding stops reaching income
     that no one is paid on a quarterly schedule.
 
-    Employment is net of the employee social-insurance levy, exactly as in the
-    full pool, so the two agree on the one stream they share.
+    Employment arrives net of the employee social-insurance levy, withheld by the
+    wage setter, exactly as in the full pool, so the two agree on the stream they
+    share.
 
     Args:
         ctx: The annualized PIT context.
@@ -189,7 +192,7 @@ def build_withheld_income_pool(ctx: PitContext) -> np.ndarray:
     Returns:
         Withheld-against income per individual.
     """
-    return ctx.employee_income * (1.0 - ctx.employee_si_rate)
+    return ctx.employee_income
 
 
 def assert_pooled_streams_are_scaled(ctx: PitContext, streams=PIT_INCOME_STREAMS) -> None:
