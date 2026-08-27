@@ -334,6 +334,11 @@ class CentralGovernment(Agent):
         )[0]
         return unemployment_benefits.astype(float)
 
+    @property
+    def progressive_pit_active(self) -> bool:
+        """Whether a progressive schedule is configured; the flat path applies when it is not."""
+        return self.states.get("pit_uppers") is not None and self.states.get("pit_rates") is not None
+
     def _fall_back_if_deferred_work_cannot_land(self, progressive_active: bool) -> None:
         """Disable deferral when no filing executes, instead of failing the run.
 
@@ -473,7 +478,7 @@ class CentralGovernment(Agent):
         # Filled only by a filing.
         credit_granted: list = []
 
-        self._fall_back_if_deferred_work_cannot_land(pit_uppers is not None and pit_rates is not None)
+        self._fall_back_if_deferred_work_cannot_land(self.progressive_pit_active)
 
         if pit_uppers is not None and pit_rates is not None:
             # The processing phase alone holds the household context, so a missing pool raises.

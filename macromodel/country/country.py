@@ -916,7 +916,7 @@ class Country:
         self.households.ts.income_rental.append(
             self.households.compute_rental_income(
                 housing_data=self.housing_market.states["properties"],
-                income_taxes=self.central_government.states["Income Tax"],
+                income_taxes=self._rental_withholding_rate(),
             )
         )
         self.households.ts.total_income_rental.append([self.households.ts.current("income_rental").sum()])
@@ -1446,7 +1446,7 @@ class Country:
         # Recalculate rental income with final housing market data and overwrite the planned value
         final_income_rental = self.households.compute_rental_income(
             housing_data=self.housing_market.states["properties"],
-            income_taxes=self.central_government.states["Income Tax"],
+            income_taxes=self._rental_withholding_rate(),
         )
         self.households.ts.dicts["income_rental"][-1] = final_income_rental
         self.households.ts.dicts["total_income_rental"][-1] = [final_income_rental.sum()]
@@ -1753,11 +1753,31 @@ class Country:
             imports=np.nansum(self.economy.ts.current("imports")),
             operating_surplus=self.firms.ts.current("gross_operating_surplus_mixed_income").sum(),
             wages=self.firms.ts.current("total_wage").sum(),
-            rent_received=self.economy.ts.current("total_real_rent_rec")[0]
-            + self.central_government.ts.current("taxes_rental_income")[0],
+            rent_received=self.economy.ts.current("total_real_rent_rec")[0] + self._rent_received_gross_up(),
             central_government_rent_received=self.central_government.ts.current("total_rent_received")[0],
             running_multiple_countries=self.running_multiple_countries,
         )
+
+    def _rental_withholding_rate(self) -> float:
+        """Rate withheld from rent at the point of transaction.
+
+        Zero on the progressive path: Canadian rental income has no tax withheld at the
+        transaction and is assessed at the year-end filing, where the PIT pool already taxes it.
+        The flat path keeps the haircut, which is the tax there.
+        """
+        if self.central_government.progressive_pit_active:
+            return 0.0
+        return self.central_government.states["Income Tax"]
+
+    def _rent_received_gross_up(self) -> float:
+        """Tax added back to reconstitute gross rent for the income leg of GDP.
+
+        Zero on the progressive path, where nothing is withheld and the received figure is
+        already gross, so adding it would double-count.
+        """
+        if self.central_government.progressive_pit_active:
+            return 0.0
+        return self.central_government.ts.current("taxes_rental_income")[0]
 
     def update_population_structure(self) -> None:
         """Update demographic composition.
