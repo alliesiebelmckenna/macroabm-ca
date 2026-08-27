@@ -31,8 +31,8 @@ def _set_progressive(country, active: bool) -> None:
     """Toggle the one predicate the whole gate reads."""
     states = country.central_government.states
     if active:
-        states["pit_uppers"] = np.array([[1.0e9]])
-        states["pit_rates"] = np.array([[0.15]])
+        states["pit_uppers"] = np.array([1.0e9])
+        states["pit_rates"] = np.array([0.15])
     else:
         states.pop("pit_uppers", None)
         states.pop("pit_rates", None)

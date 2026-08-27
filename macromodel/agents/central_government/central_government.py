@@ -475,8 +475,6 @@ class CentralGovernment(Agent):
         self.states["tax_step"] = int(self.states.get("tax_step", 0)) + 1
 
         # Personal income tax: progressive when a schedule is configured, else flat.
-        pit_uppers = self.states.get("pit_uppers")
-        pit_rates = self.states.get("pit_rates")
         settlement = 0.0  # only a filing on the progressive path makes this non-zero
         # Refundable credits are expenditure at full value, so they never net into taxes_income.
         rtc_settlement = 0.0
@@ -486,7 +484,7 @@ class CentralGovernment(Agent):
 
         self._fall_back_if_deferred_work_cannot_land(self.progressive_pit_active)
 
-        if pit_uppers is not None and pit_rates is not None:
+        if self.progressive_pit_active:
             # The processing phase alone holds the household context, so a missing pool raises.
             if taxable_income_per_ind is None or nrtc_base_per_ind is None:
                 raise ValueError(
