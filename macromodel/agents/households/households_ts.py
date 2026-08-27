@@ -114,6 +114,8 @@ def create_households_timeseries(
         income_social_transfers=data["Regular Social Transfers"].values,
         total_income_social_transfers=[data["Regular Social Transfers"].values.sum()],
         expected_income_social_transfers=data["Regular Social Transfers"].values,
+        # No filing has settled at construction, so this starts at zero rather than from data.
+        income_pit_settlement=np.zeros_like(data["Employee Income"].values, dtype=float),
         income_rental=data["Rental Income from Real Estate"].values,
         total_income_rental=[data["Rental Income from Real Estate"].values.sum()],
         income_financial_assets=data["Income from Financial Assets"].values,

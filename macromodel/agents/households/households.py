@@ -715,6 +715,7 @@ class Households(Agent):
         return (
             self.ts.current("income_employee")
             + self.ts.current("income_social_transfers")
+            + self.ts.current("income_pit_settlement")
             + self.ts.current("income_rental")
             + self.ts.current("income_financial_assets")
         )

@@ -539,6 +539,12 @@ class CentralGovernment(Agent):
         # Revenue foregone to the non-refundable credits: reported, never booked.
         self.ts.pit_non_refundable_credits_granted.append([float(sum(credit_granted))])
 
+        # Per individual, because the filing debits the household that underpaid, not the average.
+        # Signed: positive means the household owes more at the filing.
+        self.states["pit_settlement_per_ind"] = (
+            np.asarray(settlement, dtype=float) if not np.isscalar(settlement) else 0.0
+        )
+
         # Per individual, because the payment circuit needs who is owed, not just how much.
         self.states["pit_rtc_paid_per_ind"] = (
             np.asarray(rtc_settlement) + np.asarray(rtc_instalment) if not np.isscalar(rtc_settlement) else 0.0

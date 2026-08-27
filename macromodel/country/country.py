@@ -1180,6 +1180,27 @@ class Country:
             return np.zeros(n_hh)
         return np.bincount(corr, weights=paid, minlength=n_hh)[:n_hh]
 
+    def _pit_settlement_per_household(self) -> "np.ndarray":
+        """The year-end filing settlement, aggregated to households and signed as INCOME.
+
+        Negative where the filing says the household underpaid and owes more, positive where
+        it overpaid and is refunded. Returned as an income term so the callers add it like any
+        other, and zeros when no filing settled this period.
+
+        It joins the REALISED income only. A household does not know its filing outcome when it
+        plans consumption, so the settlement lands on saving and wealth rather than on a plan
+        already made against expected income.
+        """
+        n_hh = int(self.households.ts.current("n_households"))
+        settled = self.central_government.states.get("pit_settlement_per_ind")
+        if settled is None or np.isscalar(settled):
+            return np.zeros(n_hh)
+        corr = np.asarray(self.individuals.states["Corresponding Household ID"]).astype(int)
+        settled = np.asarray(settled, dtype=float)
+        if len(settled) != len(corr):
+            return np.zeros(n_hh)
+        return -np.bincount(corr, weights=settled, minlength=n_hh)[:n_hh]
+
     def update_realised_metrics(self) -> None:
         """Update realized economic outcomes after market clearing.
 
@@ -1473,6 +1494,8 @@ class Country:
         self.households.ts.total_income_financial_assets.append(
             [self.households.ts.current("income_financial_assets").sum()]
         )
+        # Must precede compute_income, which reads this series.
+        self.households.ts.income_pit_settlement.append(self._pit_settlement_per_household())
         self.households.ts.income.append(self.households.compute_income())
         self.households.ts.income_histogram.append(get_histogram(self.households.ts.current("income"), self.scale))
 
