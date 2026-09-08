@@ -558,7 +558,9 @@ class CentralGovernment(Agent):
             np.asarray(rtc_settlement) + np.asarray(rtc_instalment) if not np.isscalar(rtc_settlement) else 0.0
         )
 
-        # Reporting figure (feeds GDP rent_received); already inside taxes_income.
+        # Reporting figure (feeds GDP rent_received), never summed into compute_revenue. "Already inside
+        # taxes_income" holds on the FLAT path only, where this same term is one of its three summands; on the
+        # progressive path the pool assesses landlord rental income, while this is rent PAID -- a different base.
         self.ts.taxes_rental_income.append([self.states["Income Tax"] * current_total_rent_paid])
 
         # Taxes on employer social insurance
